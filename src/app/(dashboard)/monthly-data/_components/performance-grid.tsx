@@ -22,7 +22,7 @@ import {
 import type { EmployeeMonthlyData, UserRole } from "@/lib/types";
 import { getColumns } from "./columns";
 import { EmployeeDetailSheet } from "./employee-detail-sheet";
-import { MonthSelector } from "./month-selector";
+import { MonthSelector } from "@/components/month-selector";
 
 type Props = {
   data: EmployeeMonthlyData[];
@@ -72,7 +72,7 @@ export function PerformanceGrid({ data, userRole, month, year }: Props) {
             className="pl-9"
           />
         </div>
-        <MonthSelector month={month} year={year} />
+        <MonthSelector month={month} year={year} basePath="/monthly-data" />
       </div>
 
       {/* Table */}
