@@ -1,7 +1,9 @@
 "use client";
 
-import { LogOut } from "lucide-react";
-import { logout } from "@/app/(dashboard)/actions";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
+import { LogOut, Loader2 } from "lucide-react";
+import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
@@ -13,6 +15,17 @@ export function AppHeader({
   userName: string;
   userRole: string;
 }) {
+  const router = useRouter();
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+
+  const handleLogout = async () => {
+    setIsLoggingOut(true);
+    const supabase = createClient();
+    await supabase.auth.signOut();
+    router.push("/login");
+    router.refresh();
+  };
+
   return (
     <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
       <SidebarTrigger className="-ml-1" />
@@ -25,12 +38,20 @@ export function AppHeader({
             {userRole.replace("_", " ")}
           </p>
         </div>
-        <form action={logout}>
-          <Button variant="ghost" size="icon" className="h-8 w-8">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          onClick={handleLogout}
+          disabled={isLoggingOut}
+        >
+          {isLoggingOut ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
             <LogOut className="h-4 w-4" />
-            <span className="sr-only">Log out</span>
-          </Button>
-        </form>
+          )}
+          <span className="sr-only">Log out</span>
+        </Button>
       </div>
     </header>
   );
