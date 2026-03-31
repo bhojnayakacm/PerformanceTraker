@@ -29,19 +29,19 @@ export function MetricCell({ target, actual }: MetricCellProps) {
         : "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400";
 
   return (
-    <div className="space-y-1 min-w-[80px]">
-      <div className="flex items-baseline gap-1 text-sm">
-        <span className="font-medium tabular-nums">
+    <div className="space-y-1.5 min-w-[100px]">
+      <div className="flex items-baseline justify-between gap-2 text-sm">
+        <span className="font-semibold tabular-nums">
           {actualVal.toLocaleString("en-IN")}
         </span>
-        <span className="text-muted-foreground text-xs">
+        <span className="text-muted-foreground text-xs tabular-nums">
           / {target.toLocaleString("en-IN")}
         </span>
       </div>
       <div className="flex items-center gap-2">
-        <div className="h-1.5 flex-1 rounded-full bg-muted">
+        <div className="h-1.5 flex-1 rounded-full bg-muted/60 overflow-hidden">
           <div
-            className={`h-full rounded-full transition-all ${barColor}`}
+            className={`h-full rounded-full transition-all duration-500 ease-out ${barColor}`}
             style={{ width: `${Math.min(pct, 100)}%` }}
           />
         </div>

@@ -8,7 +8,6 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from "@/components/ui/select";
 
 const MONTHS = [
@@ -70,7 +69,7 @@ export function MonthSelector({ month, year, basePath }: Props) {
           onValueChange={(val) => navigate(Number(val), year)}
         >
           <SelectTrigger className="w-[130px] bg-card">
-            <SelectValue />
+            <span className="flex-1 text-left">{MONTHS[month - 1]}</span>
           </SelectTrigger>
           <SelectContent align="start" alignItemWithTrigger={false}>
             {MONTHS.map((name, i) => (
@@ -86,7 +85,7 @@ export function MonthSelector({ month, year, basePath }: Props) {
           onValueChange={(val) => navigate(month, Number(val))}
         >
           <SelectTrigger className="w-[85px] bg-card">
-            <SelectValue />
+            <span className="flex-1 text-left">{year}</span>
           </SelectTrigger>
           <SelectContent align="start" alignItemWithTrigger={false}>
             {years.map((y) => (

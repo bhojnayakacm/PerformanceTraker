@@ -4,6 +4,7 @@ import { type ColumnDef } from "@tanstack/react-table";
 import { ArrowUpDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { EmployeeMonthlyData } from "@/lib/types";
+import { getInitials, getAvatarColor } from "@/lib/utils";
 import { MetricCell } from "./metric-cell";
 
 const formatCurrency = (n: number) =>
@@ -28,14 +29,24 @@ export function getColumns(): ColumnDef<EmployeeMonthlyData>[] {
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
       ),
-      cell: ({ row }) => (
-        <div>
-          <div className="font-medium">{row.original.employee.name}</div>
-          <div className="text-xs text-muted-foreground">
-            {row.original.employee.emp_id}
+      cell: ({ row }) => {
+        const name = row.original.employee.name;
+        return (
+          <div className="flex items-center gap-3">
+            <div
+              className={`flex size-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${getAvatarColor(name)}`}
+            >
+              {getInitials(name)}
+            </div>
+            <div>
+              <div className="font-medium leading-tight">{name}</div>
+              <div className="text-xs text-muted-foreground leading-tight">
+                {row.original.employee.emp_id}
+              </div>
+            </div>
           </div>
-        </div>
-      ),
+        );
+      },
     },
     {
       id: "meetings",

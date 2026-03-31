@@ -11,6 +11,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { Employee, UserRole } from "@/lib/types";
+import { getInitials, getAvatarColor } from "@/lib/utils";
 
 type ColumnActions = {
   onEdit: (employee: Employee) => void;
@@ -34,9 +35,19 @@ export function getColumns(
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
       ),
-      cell: ({ row }) => (
-        <span className="font-medium">{row.getValue("name")}</span>
-      ),
+      cell: ({ row }) => {
+        const name = row.getValue("name") as string;
+        return (
+          <div className="flex items-center gap-3">
+            <div
+              className={`flex size-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${getAvatarColor(name)}`}
+            >
+              {getInitials(name)}
+            </div>
+            <span className="font-medium">{name}</span>
+          </div>
+        );
+      },
     },
     {
       accessorKey: "emp_id",

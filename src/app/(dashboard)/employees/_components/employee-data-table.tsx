@@ -86,7 +86,7 @@ export function EmployeeDataTable({ data, userRole }: Props) {
   return (
     <div className="space-y-4">
       {/* Toolbar */}
-      <div className="flex items-center gap-3 rounded-xl border border-border/60 bg-card p-3">
+      <div className="flex items-center gap-3 rounded-xl border border-border/60 bg-card p-3 transition-shadow duration-300 hover:shadow-md">
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -110,12 +110,12 @@ export function EmployeeDataTable({ data, userRole }: Props) {
       </div>
 
       {/* Table */}
-      <Card className="shadow-sm overflow-hidden">
+      <Card className="border-0 py-0 gap-0 shadow-sm ring-1 ring-border/50 overflow-hidden transition-shadow duration-300 hover:shadow-md">
         <CardContent className="p-0">
           <Table>
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
-              <TableRow key={headerGroup.id} className="bg-muted/40 hover:bg-muted/40">
+              <TableRow key={headerGroup.id} className="hover:bg-transparent">
                 {headerGroup.headers.map((header) => (
                   <TableHead key={header.id}>
                     {header.isPlaceholder
@@ -149,14 +149,18 @@ export function EmployeeDataTable({ data, userRole }: Props) {
                   colSpan={columns.length}
                   className="h-48 text-center"
                 >
-                  <div className="flex flex-col items-center gap-2 text-muted-foreground">
-                    <Users className="h-10 w-10" />
-                    <p className="text-lg font-medium">No employees found</p>
-                    <p className="text-sm">
-                      {globalFilter
-                        ? "Try adjusting your search."
-                        : "Get started by adding your first employee."}
-                    </p>
+                  <div className="flex flex-col items-center gap-3 py-4">
+                    <div className="flex size-12 items-center justify-center rounded-full bg-muted/60">
+                      <Users className="h-6 w-6 text-muted-foreground/80" />
+                    </div>
+                    <div className="space-y-1 text-center">
+                      <p className="text-sm font-medium text-foreground/70">No employees found</p>
+                      <p className="text-xs text-muted-foreground">
+                        {globalFilter
+                          ? "Try adjusting your search."
+                          : "Get started by adding your first employee."}
+                      </p>
+                    </div>
                   </div>
                 </TableCell>
               </TableRow>
