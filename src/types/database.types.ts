@@ -20,9 +20,7 @@ export type Database = {
           employee_id: string
           date: string
           target_calls: number
-          target_architect_meetings: number
-          target_client_meetings: number
-          target_site_visits: number
+          target_total_meetings: number
           actual_calls: number
           actual_architect_meetings: number
           actual_client_meetings: number
@@ -35,9 +33,7 @@ export type Database = {
           employee_id: string
           date: string
           target_calls?: number
-          target_architect_meetings?: number
-          target_client_meetings?: number
-          target_site_visits?: number
+          target_total_meetings?: number
           actual_calls?: number
           actual_architect_meetings?: number
           actual_client_meetings?: number
@@ -50,9 +46,7 @@ export type Database = {
           employee_id?: string
           date?: string
           target_calls?: number
-          target_architect_meetings?: number
-          target_client_meetings?: number
-          target_site_visits?: number
+          target_total_meetings?: number
           actual_calls?: number
           actual_architect_meetings?: number
           actual_client_meetings?: number

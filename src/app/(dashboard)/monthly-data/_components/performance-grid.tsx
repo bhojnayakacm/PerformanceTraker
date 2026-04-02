@@ -30,9 +30,10 @@ type Props = {
   userRole: UserRole;
   month: number;
   year: number;
+  isCurrentMonth?: boolean;
 };
 
-export function PerformanceGrid({ data, userRole, month, year }: Props) {
+export function PerformanceGrid({ data, userRole, month, year, isCurrentMonth }: Props) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState("");
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -40,7 +41,7 @@ export function PerformanceGrid({ data, userRole, month, year }: Props) {
     null
   );
 
-  const columns = useMemo(() => getColumns(), []);
+  const columns = useMemo(() => getColumns(isCurrentMonth), [isCurrentMonth]);
 
   const table = useReactTable({
     data,

@@ -14,7 +14,7 @@ const formatCurrency = (n: number) =>
     maximumFractionDigits: 0,
   }).format(n);
 
-export function getColumns(): ColumnDef<EmployeeMonthlyData>[] {
+export function getColumns(isCurrentMonth?: boolean): ColumnDef<EmployeeMonthlyData>[] {
   return [
     {
       id: "employee",
@@ -50,7 +50,7 @@ export function getColumns(): ColumnDef<EmployeeMonthlyData>[] {
     },
     {
       id: "meetings",
-      header: "Meetings",
+      header: isCurrentMonth ? "Meetings (MTD)" : "Meetings",
       cell: ({ row }) => {
         const target = row.original.target?.target_total_meetings;
         const actual =
@@ -62,7 +62,7 @@ export function getColumns(): ColumnDef<EmployeeMonthlyData>[] {
     },
     {
       id: "calls",
-      header: "Calls",
+      header: isCurrentMonth ? "Calls (MTD)" : "Calls",
       cell: ({ row }) => (
         <MetricCell
           target={row.original.target?.target_total_calls}

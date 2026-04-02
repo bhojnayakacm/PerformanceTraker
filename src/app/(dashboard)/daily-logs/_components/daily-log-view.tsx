@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition, useCallback, useMemo } from "react";
+import { useState, useEffect, useTransition, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -10,6 +10,7 @@ import {
   Save,
   Loader2,
   Search,
+  Target,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,14 +25,13 @@ import { Calendar } from "@/components/ui/calendar";
 import type { Employee, UserRole, DailyMetric } from "@/lib/types";
 import { getInitials, getAvatarColor } from "@/lib/utils";
 import { saveDailyMetrics } from "../actions";
+import { BulkTargetsDialog } from "./bulk-targets-dialog";
 
 /* ── Types ── */
 
 type MetricFields =
   | "target_calls"
-  | "target_architect_meetings"
-  | "target_client_meetings"
-  | "target_site_visits"
+  | "target_total_meetings"
   | "actual_calls"
   | "actual_architect_meetings"
   | "actual_client_meetings"
@@ -41,9 +41,7 @@ type EntryValues = Record<MetricFields, number>;
 
 const EMPTY_ENTRY: EntryValues = {
   target_calls: 0,
-  target_architect_meetings: 0,
-  target_client_meetings: 0,
-  target_site_visits: 0,
+  target_total_meetings: 0,
   actual_calls: 0,
   actual_architect_meetings: 0,
   actual_client_meetings: 0,
@@ -63,9 +61,7 @@ function toEntryValues(dm: DailyMetric | undefined): EntryValues {
   if (!dm) return { ...EMPTY_ENTRY };
   return {
     target_calls: dm.target_calls,
-    target_architect_meetings: dm.target_architect_meetings,
-    target_client_meetings: dm.target_client_meetings,
-    target_site_visits: dm.target_site_visits,
+    target_total_meetings: dm.target_total_meetings,
     actual_calls: dm.actual_calls,
     actual_architect_meetings: dm.actual_architect_meetings,
     actual_client_meetings: dm.actual_client_meetings,
@@ -87,15 +83,38 @@ function shiftDate(isoDate: string, days: number): string {
   return toLocalDateString(shifted);
 }
 
+const SHORT_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const LONG_MONTHS = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
 function formatShortDate(isoDate: string): string {
   const [y, m, d] = isoDate.split("-").map(Number);
-  const dt = new Date(y, m - 1, d);
-  return dt.toLocaleDateString("en-GB", {
-    weekday: "short",
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  });
+  const dow = new Date(y, m - 1, d).getDay();
+  return `${SHORT_DAYS[dow]}, ${d} ${LONG_MONTHS[m - 1]} ${y}`;
+}
+
+function getAchievementColors(
+  target: number,
+  actual: number
+): { bg: string; text: string } {
+  if (target <= 0 || actual <= 0) return { bg: "", text: "" };
+  const ratio = actual / target;
+  if (ratio >= 0.9)
+    return {
+      bg: "bg-emerald-50/60 dark:bg-emerald-950/20",
+      text: "font-medium text-emerald-700 dark:text-emerald-400",
+    };
+  if (ratio >= 0.7)
+    return {
+      bg: "bg-amber-50/60 dark:bg-amber-950/20",
+      text: "font-medium text-amber-700 dark:text-amber-400",
+    };
+  return {
+    bg: "bg-red-50/50 dark:bg-red-950/20",
+    text: "font-medium text-red-600 dark:text-red-400",
+  };
 }
 
 /* ── Component ── */
@@ -114,6 +133,9 @@ export function DailyLogView({
 
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [searchFilter, setSearchFilter] = useState("");
+  const [bulkDialogOpen, setBulkDialogOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
   const filteredEmployees = useMemo(() => {
     if (!searchFilter) return employees;
@@ -149,6 +171,16 @@ export function DailyLogView({
     }
     return init;
   });
+
+  // Re-sync local state when server data refreshes (e.g. after bulk targets)
+  useEffect(() => {
+    const init: Record<string, EntryValues> = {};
+    for (const emp of employees) {
+      init[emp.id] = toEntryValues(initialData[emp.id]);
+    }
+    setOriginalEntries(init);
+    setEntries(init);
+  }, [initialData, employees]);
 
   // Smart dirty — only true when draft actually differs from server baseline
   const dirty = useMemo(() => {
@@ -213,13 +245,18 @@ export function DailyLogView({
         return;
       }
 
-      toast.success(`Saved daily data for ${changedEntries.length} employee(s)`);
+      toast.success(
+        `Saved daily data for ${changedEntries.length} employee(s)`
+      );
       setOriginalEntries((prev) => ({ ...prev, ...savedSnapshot }));
     });
   };
 
   const today = toLocalDateString(new Date());
   const isBusy = isSaving || isNavigating;
+
+  // Extract month/year for the bulk targets dialog defaults
+  const [dateYear, dateMonth] = date.split("-").map(Number);
 
   return (
     <div className="space-y-4">
@@ -228,6 +265,7 @@ export function DailyLogView({
         <div className="relative flex-1 max-w-sm min-w-[200px]">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
+            id="daily-logs-search-input"
             placeholder="Search employees..."
             value={searchFilter}
             onChange={(e) => setSearchFilter(e.target.value)}
@@ -250,6 +288,7 @@ export function DailyLogView({
               <PopoverTrigger
                 render={
                   <Button
+                    id="daily-logs-date-trigger"
                     variant="outline"
                     className="gap-2 px-3"
                     disabled={isBusy}
@@ -290,7 +329,7 @@ export function DailyLogView({
               <ChevronRight className="h-4 w-4" />
             </Button>
 
-            {date !== today && (
+            {mounted && date !== today && (
               <Button
                 variant="ghost"
                 size="sm"
@@ -302,8 +341,25 @@ export function DailyLogView({
             )}
           </div>
 
+          {canEditTargets && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setBulkDialogOpen(true)}
+              disabled={isBusy}
+            >
+              <Target className="mr-2 h-4 w-4" />
+              Set Targets
+            </Button>
+          )}
+
           {canEdit && dirty.size > 0 && (
-            <Button onClick={handleSave} disabled={isBusy} size="sm" className="shadow-sm">
+            <Button
+              onClick={handleSave}
+              disabled={isBusy}
+              size="sm"
+              className="shadow-sm"
+            >
               {isSaving ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               ) : (
@@ -316,11 +372,14 @@ export function DailyLogView({
       </div>
 
       {/* ── Data Grid ── */}
-      <Card className={`border-0 py-0 gap-0 shadow-sm ring-1 ring-border/50 overflow-hidden transition-shadow duration-300 hover:shadow-md ${isNavigating ? "opacity-50 pointer-events-none" : ""}`}>
+      <Card
+        className={`border-0 py-0 gap-0 shadow-sm ring-1 ring-border/50 overflow-hidden transition-shadow duration-300 hover:shadow-md ${isNavigating ? "opacity-50 pointer-events-none" : ""}`}
+      >
         <CardContent className="p-0">
           <div className="overflow-auto max-h-[calc(100vh-16rem)]">
             <table className="w-full border-collapse text-sm">
               <thead className="sticky top-0 z-20 bg-slate-100 dark:bg-slate-800">
+                {/* Group headers */}
                 <tr className="border-b border-border/60">
                   <th
                     className="text-left p-3 text-sm font-semibold text-slate-700 dark:text-slate-300 tracking-wide sticky left-0 bg-slate-100 dark:bg-slate-800 z-30"
@@ -336,23 +395,12 @@ export function DailyLogView({
                   </th>
                   <th
                     className="text-center px-2 pt-3 pb-1.5 text-sm font-semibold text-slate-700 dark:text-slate-300 tracking-wide border-l border-border/40 bg-slate-100 dark:bg-slate-800"
-                    colSpan={2}
+                    colSpan={4}
                   >
-                    Arch. Meetings
-                  </th>
-                  <th
-                    className="text-center px-2 pt-3 pb-1.5 text-sm font-semibold text-slate-700 dark:text-slate-300 tracking-wide border-l border-border/40 bg-slate-100 dark:bg-slate-800"
-                    colSpan={2}
-                  >
-                    Client Meetings
-                  </th>
-                  <th
-                    className="text-center px-2 pt-3 pb-1.5 text-sm font-semibold text-slate-700 dark:text-slate-300 tracking-wide border-l border-border/40 bg-slate-100 dark:bg-slate-800"
-                    colSpan={2}
-                  >
-                    Site Visits
+                    Meetings
                   </th>
                 </tr>
+                {/* Sub-headers */}
                 <tr className="border-b border-border/60">
                   <th className="text-center px-1.5 py-2 text-[11px] uppercase tracking-wider font-semibold text-slate-500 dark:text-slate-400 border-l border-border/40 bg-slate-200/70 dark:bg-slate-700/50">
                     Target
@@ -364,19 +412,13 @@ export function DailyLogView({
                     Target
                   </th>
                   <th className="text-center px-1.5 py-2 text-[11px] uppercase tracking-wider font-semibold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800">
-                    Actual
-                  </th>
-                  <th className="text-center px-1.5 py-2 text-[11px] uppercase tracking-wider font-semibold text-slate-500 dark:text-slate-400 border-l border-border/40 bg-slate-200/70 dark:bg-slate-700/50">
-                    Target
+                    Architect
                   </th>
                   <th className="text-center px-1.5 py-2 text-[11px] uppercase tracking-wider font-semibold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800">
-                    Actual
-                  </th>
-                  <th className="text-center px-1.5 py-2 text-[11px] uppercase tracking-wider font-semibold text-slate-500 dark:text-slate-400 border-l border-border/40 bg-slate-200/70 dark:bg-slate-700/50">
-                    Target
+                    Client
                   </th>
                   <th className="text-center px-1.5 py-2 text-[11px] uppercase tracking-wider font-semibold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800">
-                    Actual
+                    Site Visits
                   </th>
                 </tr>
               </thead>
@@ -394,14 +436,16 @@ export function DailyLogView({
                 ))}
                 {filteredEmployees.length === 0 && (
                   <tr>
-                    <td colSpan={9} className="py-16">
+                    <td colSpan={7} className="py-16">
                       <div className="flex flex-col items-center gap-3">
                         <div className="flex size-12 items-center justify-center rounded-full bg-muted/60">
                           <CalendarDays className="h-6 w-6 text-muted-foreground/80" />
                         </div>
                         <div className="space-y-1 text-center">
                           <p className="text-sm font-medium text-foreground/70">
-                            {searchFilter ? "No employees match your search" : "No active employees found"}
+                            {searchFilter
+                              ? "No employees match your search"
+                              : "No active employees found"}
                           </p>
                           <p className="text-xs text-muted-foreground">
                             {searchFilter
@@ -421,13 +465,15 @@ export function DailyLogView({
 
       {/* ── Legend ── */}
       {canEdit && (
-        <div className="flex items-center gap-3 text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
           <div className="flex items-center gap-1.5">
             <div className="h-3 w-3 rounded-sm bg-amber-100 border border-amber-300 dark:bg-amber-950/40 dark:border-amber-800" />
             <span>Unsaved changes</span>
           </div>
           <span>&middot;</span>
-          <span>Target columns (super admin only) &middot; Actual columns</span>
+          <span>
+            Target columns (super admin only) &middot; Actual columns
+          </span>
           <span>&middot;</span>
           <div className="flex items-center gap-1.5">
             <div className="h-3 w-3 rounded-sm bg-emerald-50 border border-emerald-300" />
@@ -435,7 +481,7 @@ export function DailyLogView({
           </div>
           <div className="flex items-center gap-1.5">
             <div className="h-3 w-3 rounded-sm bg-amber-50 border border-amber-300" />
-            <span>70–89%</span>
+            <span>70&ndash;89%</span>
           </div>
           <div className="flex items-center gap-1.5">
             <div className="h-3 w-3 rounded-sm bg-red-50 border border-red-300" />
@@ -443,21 +489,23 @@ export function DailyLogView({
           </div>
         </div>
       )}
+
+      {/* ── Bulk Targets Dialog ── */}
+      <BulkTargetsDialog
+        open={bulkDialogOpen}
+        onOpenChange={setBulkDialogOpen}
+        employees={employees}
+        defaultMonth={dateMonth}
+        defaultYear={dateYear}
+      />
     </div>
   );
 }
 
 /* ── Employee Row ── */
 
-const METRICS: {
-  target: MetricFields;
-  actual: MetricFields;
-}[] = [
-  { target: "target_calls", actual: "actual_calls" },
-  { target: "target_architect_meetings", actual: "actual_architect_meetings" },
-  { target: "target_client_meetings", actual: "actual_client_meetings" },
-  { target: "target_site_visits", actual: "actual_site_visits" },
-];
+const INPUT_BASE =
+  "h-8 w-16 block mx-auto text-sm px-1 [text-align:center] border-transparent bg-transparent rounded-md transition-colors hover:border-border/60 hover:bg-white focus-visible:bg-white focus-visible:border-primary/30 focus-visible:ring-2 focus-visible:ring-primary/15 disabled:hover:border-transparent disabled:hover:bg-transparent [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none";
 
 function EmployeeRow({
   employee,
@@ -474,6 +522,22 @@ function EmployeeRow({
   canEdit: boolean;
   onChange: (empId: string, field: MetricFields, value: string) => void;
 }) {
+  // Calls achievement
+  const callsColors = getAchievementColors(
+    values.target_calls,
+    values.actual_calls
+  );
+
+  // Meetings achievement (combined: sum of 3 actuals vs single target)
+  const meetingsTotal =
+    values.actual_architect_meetings +
+    values.actual_client_meetings +
+    values.actual_site_visits;
+  const meetingsColors = getAchievementColors(
+    values.target_total_meetings,
+    meetingsTotal
+  );
+
   return (
     <tr
       className={`border-b border-border/40 transition-colors ${
@@ -482,6 +546,7 @@ function EmployeeRow({
           : "hover:bg-muted/20"
       }`}
     >
+      {/* Employee */}
       <td className="p-3 sticky left-0 bg-inherit z-10">
         <div className="flex items-center gap-2.5">
           <div
@@ -490,98 +555,123 @@ function EmployeeRow({
             {getInitials(employee.name)}
           </div>
           <div className="min-w-0">
-            <div className="font-medium whitespace-nowrap leading-tight">{employee.name}</div>
-            <div className="text-[11px] text-muted-foreground leading-tight">{employee.emp_id}</div>
+            <div className="font-medium whitespace-nowrap leading-tight">
+              {employee.name}
+            </div>
+            <div className="text-[11px] text-muted-foreground leading-tight">
+              {employee.emp_id}
+            </div>
           </div>
           {isDirty && (
-            <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 text-amber-600 border-amber-300">
+            <Badge
+              variant="outline"
+              className="text-[10px] px-1.5 py-0 h-4 text-amber-600 border-amber-300"
+            >
               edited
             </Badge>
           )}
         </div>
       </td>
-      {METRICS.map((m) => (
-        <MetricCells
-          key={m.target}
-          empId={employee.id}
-          targetField={m.target}
-          actualField={m.actual}
-          targetValue={values[m.target]}
-          actualValue={values[m.actual]}
-          canEditTargets={canEditTargets}
-          canEdit={canEdit}
-          onChange={onChange}
-        />
-      ))}
-    </tr>
-  );
-}
 
-/* ── Metric Input Cells ── */
-
-function MetricCells({
-  empId,
-  targetField,
-  actualField,
-  targetValue,
-  actualValue,
-  canEditTargets,
-  canEdit,
-  onChange,
-}: {
-  empId: string;
-  targetField: MetricFields;
-  actualField: MetricFields;
-  targetValue: number;
-  actualValue: number;
-  canEditTargets: boolean;
-  canEdit: boolean;
-  onChange: (empId: string, field: MetricFields, value: string) => void;
-}) {
-  const inputBase =
-    "h-8 w-16 block mx-auto text-sm px-1 [text-align:center] border-transparent bg-transparent rounded-md transition-colors hover:border-border/60 hover:bg-white focus-visible:bg-white focus-visible:border-primary/30 focus-visible:ring-2 focus-visible:ring-primary/15 disabled:hover:border-transparent disabled:hover:bg-transparent [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none";
-
-  // Achievement color for actual value cells
-  let actualCellBg = "";
-  let actualTextColor = "";
-  if (targetValue > 0 && actualValue > 0) {
-    const ratio = actualValue / targetValue;
-    if (ratio >= 0.9) {
-      actualCellBg = "bg-emerald-50/60 dark:bg-emerald-950/20";
-      actualTextColor = "font-medium text-emerald-700 dark:text-emerald-400";
-    } else if (ratio >= 0.7) {
-      actualCellBg = "bg-amber-50/60 dark:bg-amber-950/20";
-      actualTextColor = "font-medium text-amber-700 dark:text-amber-400";
-    } else {
-      actualCellBg = "bg-red-50/50 dark:bg-red-950/20";
-      actualTextColor = "font-medium text-red-600 dark:text-red-400";
-    }
-  }
-
-  return (
-    <>
+      {/* Calls Target */}
       <td className="px-1 py-1.5 border-l border-border/40 bg-muted/20">
         <Input
+          id={`target-calls-${employee.id}`}
           type="number"
           min={0}
-          value={targetValue || ""}
-          onChange={(e) => onChange(empId, targetField, e.target.value)}
+          value={values.target_calls || ""}
+          onChange={(e) =>
+            onChange(employee.id, "target_calls", e.target.value)
+          }
           disabled={!canEditTargets}
-          className={inputBase}
+          className={INPUT_BASE}
           placeholder="0"
         />
       </td>
-      <td className={`px-1 py-1.5 transition-colors ${actualCellBg}`}>
+
+      {/* Calls Actual */}
+      <td className={`px-1 py-1.5 transition-colors ${callsColors.bg}`}>
         <Input
+          id={`actual-calls-${employee.id}`}
           type="number"
           min={0}
-          value={actualValue || ""}
-          onChange={(e) => onChange(empId, actualField, e.target.value)}
+          value={values.actual_calls || ""}
+          onChange={(e) =>
+            onChange(employee.id, "actual_calls", e.target.value)
+          }
           disabled={!canEdit}
-          className={`${inputBase} ${actualTextColor}`}
+          className={`${INPUT_BASE} ${callsColors.text}`}
           placeholder="0"
         />
       </td>
-    </>
+
+      {/* Meetings Target (single combined target) */}
+      <td className="px-1 py-1.5 border-l border-border/40 bg-muted/20">
+        <Input
+          id={`target-meetings-${employee.id}`}
+          type="number"
+          min={0}
+          value={values.target_total_meetings || ""}
+          onChange={(e) =>
+            onChange(employee.id, "target_total_meetings", e.target.value)
+          }
+          disabled={!canEditTargets}
+          className={INPUT_BASE}
+          placeholder="0"
+        />
+      </td>
+
+      {/* Architect Meetings Actual */}
+      <td className={`px-1 py-1.5 transition-colors ${meetingsColors.bg}`}>
+        <Input
+          id={`actual-architect-${employee.id}`}
+          type="number"
+          min={0}
+          value={values.actual_architect_meetings || ""}
+          onChange={(e) =>
+            onChange(
+              employee.id,
+              "actual_architect_meetings",
+              e.target.value
+            )
+          }
+          disabled={!canEdit}
+          className={`${INPUT_BASE} ${meetingsColors.text}`}
+          placeholder="0"
+        />
+      </td>
+
+      {/* Client Meetings Actual */}
+      <td className={`px-1 py-1.5 transition-colors ${meetingsColors.bg}`}>
+        <Input
+          id={`actual-client-${employee.id}`}
+          type="number"
+          min={0}
+          value={values.actual_client_meetings || ""}
+          onChange={(e) =>
+            onChange(employee.id, "actual_client_meetings", e.target.value)
+          }
+          disabled={!canEdit}
+          className={`${INPUT_BASE} ${meetingsColors.text}`}
+          placeholder="0"
+        />
+      </td>
+
+      {/* Site Visits Actual */}
+      <td className={`px-1 py-1.5 transition-colors ${meetingsColors.bg}`}>
+        <Input
+          id={`actual-site-visits-${employee.id}`}
+          type="number"
+          min={0}
+          value={values.actual_site_visits || ""}
+          onChange={(e) =>
+            onChange(employee.id, "actual_site_visits", e.target.value)
+          }
+          disabled={!canEdit}
+          className={`${INPUT_BASE} ${meetingsColors.text}`}
+          placeholder="0"
+        />
+      </td>
+    </tr>
   );
 }

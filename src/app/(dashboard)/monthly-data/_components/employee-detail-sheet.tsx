@@ -122,6 +122,8 @@ export function EmployeeDetailSheet({
   }
 
   const totalCosting = data?.actual?.total_costing;
+  const isCurrentMonth =
+    month === new Date().getMonth() + 1 && year === new Date().getFullYear();
 
   // Read-only daily-synced values
   const meetingsTarget = data?.target?.target_total_meetings ?? 0;
@@ -157,7 +159,8 @@ export function EmployeeDetailSheet({
                   <p className="text-xs text-muted-foreground mb-3">
                     These values are auto-calculated from{" "}
                     <span className="font-medium text-foreground">Daily Logs</span>.
-                    Edit them on the Daily Logs page.
+                    {isCurrentMonth && " Targets show month-to-date pacing."}
+                    {" "}Edit them on the Daily Logs page.
                   </p>
                   <div className="grid grid-cols-[1fr_80px_80px] gap-2 text-sm">
                     <span className="text-xs font-medium text-muted-foreground">Metric</span>
