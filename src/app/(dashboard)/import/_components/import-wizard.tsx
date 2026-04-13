@@ -177,6 +177,10 @@ const CATEGORY_LABELS: Record<ModuleCategory, string> = {
 
 const CATEGORY_ORDER: ModuleCategory[] = ["master", "monthly", "daily"];
 
+// Launch restriction: only Employee imports are enabled for now.
+// Re-enable the other modules by adding "monthly" and/or "daily" here.
+const VISIBLE_CATEGORIES: ModuleCategory[] = ["master"];
+
 /* ── Component ── */
 
 export function ImportWizard() {
@@ -280,7 +284,7 @@ export function ImportWizard() {
 
       {/* ── Module Selector (grouped by category) ── */}
       <div className="space-y-5">
-        {CATEGORY_ORDER.map((category) => {
+        {CATEGORY_ORDER.filter((c) => VISIBLE_CATEGORIES.includes(c)).map((category) => {
           const modulesInCategory = MODULES.filter(
             (m) => m.category === category,
           );
