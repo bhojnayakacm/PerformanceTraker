@@ -4,7 +4,12 @@ import { z } from "zod";
 
 // ── Types ──
 
-export type ImportType = "employees" | "targets" | "actuals";
+export type ImportType =
+  | "employees"
+  | "targets"
+  | "actuals"
+  | "daily_logs"
+  | "city_tours";
 
 export type ValidatedRow<T = Record<string, unknown>> = {
   rowNumber: number;
@@ -19,13 +24,21 @@ export type ParsedData = {
 };
 
 // ── Templates ──
+//
+// Monthly Targets/Actuals templates EXCLUDE all fields that are auto-synced
+// from daily_metrics by the `trg_sync_daily_to_monthly` trigger:
+//   targets:  target_total_calls, target_total_meetings
+//   actuals:  actual_calls, actual_architect_meetings,
+//             actual_client_meetings, actual_site_visits
+// They also exclude GENERATED columns (actual_net_sale, actual_dispatched_sqft)
+// and target_travelling_cities (now driven by the City Tours module).
 
 const TEMPLATES: Record<ImportType, { headers: string[]; rows: string[][] }> = {
   employees: {
-    headers: ["emp_id", "name", "location"],
+    headers: ["emp_id", "name", "location", "state"],
     rows: [
-      ["ACM01157", "John Doe", "Mumbai"],
-      ["ACM01234", "Jane Smith", "Delhi"],
+      ["ACM01157", "John Doe", "Mumbai", "Maharashtra"],
+      ["ACM01234", "Jane Smith", "Delhi", "Delhi"],
     ],
   },
   targets: {
@@ -33,56 +46,80 @@ const TEMPLATES: Record<ImportType, { headers: string[]; rows: string[][] }> = {
       "emp_id",
       "month",
       "year",
-      "target_total_meetings",
-      "target_total_calls",
       "target_client_visits",
       "target_dispatched_sqft",
-      "target_travelling_cities",
     ],
-    rows: [["ACM01157", "3", "2026", "50", "100", "10", "500", "5"]],
+    rows: [["ACM01157", "3", "2026", "10", "500"]],
   },
   actuals: {
     headers: [
       "emp_id",
       "month",
       "year",
-      "actual_calls",
-      "actual_architect_meetings",
-      "actual_client_meetings",
-      "actual_site_visits",
       "actual_client_visits",
-      "actual_project_2",
+      "actual_conversions",
       "actual_project",
+      "actual_project_2",
       "actual_tile",
       "actual_retail",
       "actual_return",
-      "actual_conversions",
       "salary",
       "tada",
       "incentive",
       "sales_promotion",
+      "total_costing",
     ],
     rows: [
       [
         "ACM01157",
         "3",
         "2026",
-        "92",
-        "12",
-        "35",
         "8",
-        "8",
-        "100",
+        "5",
         "150",
+        "100",
         "120",
         "80",
         "50",
-        "5",
         "50000",
         "10000",
         "5000",
         "3000",
+        "180000",
       ],
+    ],
+  },
+  daily_logs: {
+    headers: [
+      "emp_id",
+      "date",
+      "target_calls",
+      "target_total_meetings",
+      "actual_calls",
+      "actual_architect_meetings",
+      "actual_client_meetings",
+      "actual_site_visits",
+      "remarks",
+    ],
+    rows: [
+      ["ACM01157", "2026-03-02", "5", "3", "5", "1", "1", "1", ""],
+      ["ACM01157", "2026-03-03", "5", "3", "0", "0", "0", "0", "Public holiday"],
+      ["ACM01157", "2026-03-04", "5", "3", "6", "2", "0", "1", ""],
+    ],
+  },
+  city_tours: {
+    headers: [
+      "emp_id",
+      "month",
+      "year",
+      "city_name",
+      "target_days",
+      "actual_days",
+    ],
+    rows: [
+      ["ACM01157", "3", "2026", "Delhi", "3", "2"],
+      ["ACM01157", "3", "2026", "Mumbai", "2", "2"],
+      ["ACM01157", "3", "2026", "Bangalore", "1", "0"],
     ],
   },
 };
@@ -131,10 +168,11 @@ function parseExcel(file: File): Promise<ParsedData> {
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
-        const wb = XLSX.read(e.target?.result, { type: "array" });
+        const wb = XLSX.read(e.target?.result, { type: "array", cellDates: true });
         const sheet = wb.Sheets[wb.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
           defval: "",
+          raw: false,
         });
 
         // Normalize headers to lowercase with underscores
@@ -160,75 +198,134 @@ function parseExcel(file: File): Promise<ParsedData> {
   });
 }
 
-// ── Validators ──
+// ── Schemas ──
+
+const monthYear = {
+  month: z.coerce
+    .number()
+    .int()
+    .min(1, "Month must be 1-12")
+    .max(12, "Month must be 1-12"),
+  year: z.coerce
+    .number()
+    .int()
+    .min(2000, "Year must be 2000+")
+    .max(2100, "Year must be ≤ 2100"),
+};
+
+// Coerces strings → 0 when blank, accepts whole-number metrics ≥ 0.
+const metric = z.coerce.number().min(0).default(0);
+
+// Accepts YYYY-MM-DD directly, or any value parseable by `new Date(...)`
+// (handles Excel dates that XLSX surfaces as ISO timestamps with cellDates).
+const dateField = z.preprocess(
+  (val) => {
+    if (val == null || val === "") return val;
+    const str = String(val).trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+    const parsed = new Date(str);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toISOString().slice(0, 10);
+    }
+    return str;
+  },
+  z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in YYYY-MM-DD format"),
+);
 
 const employeeRowSchema = z.object({
   emp_id: z.string().trim().min(1, "Emp ID is required"),
   name: z.string().trim().min(2, "Name must be at least 2 characters"),
   location: z.string().trim().optional().or(z.literal("")),
+  state: z.string().trim().optional().or(z.literal("")),
 });
 
+// Stripped: trigger-managed fields removed; target_travelling_cities moved to City Tours.
 const targetRowSchema = z.object({
   emp_id: z.string().trim().min(1, "Emp ID is required"),
-  month: z.coerce
-    .number()
-    .int()
-    .min(1, "Month must be 1-12")
-    .max(12, "Month must be 1-12"),
-  year: z.coerce
-    .number()
-    .int()
-    .min(2000, "Year must be 2000+")
-    .max(2100),
-  target_total_meetings: z.coerce.number().min(0),
-  target_total_calls: z.coerce.number().min(0),
-  target_client_visits: z.coerce.number().min(0),
-  target_dispatched_sqft: z.coerce.number().min(0),
-  target_travelling_cities: z.coerce.number().min(0),
+  ...monthYear,
+  target_client_visits: metric,
+  target_dispatched_sqft: metric,
 });
 
+// Stripped: actual_calls / *_meetings / actual_site_visits are trigger-managed.
+// actual_net_sale + actual_dispatched_sqft are GENERATED columns — never included.
 const actualRowSchema = z.object({
   emp_id: z.string().trim().min(1, "Emp ID is required"),
-  month: z.coerce
+  ...monthYear,
+  actual_client_visits: metric,
+  actual_conversions: metric,
+  actual_project: metric,
+  actual_project_2: metric,
+  actual_tile: metric,
+  actual_retail: metric,
+  actual_return: metric,
+  salary: metric,
+  tada: metric,
+  incentive: metric,
+  sales_promotion: metric,
+  total_costing: metric,
+});
+
+// Daily grain — feeds the trigger that rolls up to monthly_actuals/targets.
+const dailyLogRowSchema = z.object({
+  emp_id: z.string().trim().min(1, "Emp ID is required"),
+  date: dateField,
+  target_calls: metric,
+  target_total_meetings: metric,
+  actual_calls: metric,
+  actual_architect_meetings: metric,
+  actual_client_meetings: metric,
+  actual_site_visits: metric,
+  remarks: z
+    .string()
+    .trim()
+    .max(500, "Remarks must be ≤ 500 characters")
+    .optional()
+    .or(z.literal("")),
+});
+
+// City names are normalized server-side; here we just enforce non-empty.
+const cityTourRowSchema = z.object({
+  emp_id: z.string().trim().min(1, "Emp ID is required"),
+  ...monthYear,
+  city_name: z
+    .string()
+    .trim()
+    .min(2, "City name must be at least 2 characters")
+    .max(80, "City name must be ≤ 80 characters"),
+  target_days: z.coerce
     .number()
-    .int()
-    .min(1, "Month must be 1-12")
-    .max(12, "Month must be 1-12"),
-  year: z.coerce
+    .int("target_days must be a whole number")
+    .min(0)
+    .max(31, "target_days must be ≤ 31")
+    .default(0),
+  actual_days: z.coerce
     .number()
-    .int()
-    .min(2000, "Year must be 2000+")
-    .max(2100),
-  actual_calls: z.coerce.number().min(0),
-  actual_architect_meetings: z.coerce.number().min(0),
-  actual_client_meetings: z.coerce.number().min(0),
-  actual_site_visits: z.coerce.number().min(0),
-  actual_client_visits: z.coerce.number().min(0),
-  actual_project_2: z.coerce.number().min(0),
-  actual_project: z.coerce.number().min(0),
-  actual_tile: z.coerce.number().min(0),
-  actual_retail: z.coerce.number().min(0),
-  actual_return: z.coerce.number().min(0),
-  actual_conversions: z.coerce.number().min(0),
-  salary: z.coerce.number().min(0),
-  tada: z.coerce.number().min(0),
-  incentive: z.coerce.number().min(0),
-  sales_promotion: z.coerce.number().min(0),
+    .int("actual_days must be a whole number")
+    .min(0)
+    .max(31, "actual_days must be ≤ 31")
+    .default(0),
 });
 
 const schemas: Record<ImportType, z.ZodSchema> = {
   employees: employeeRowSchema,
   targets: targetRowSchema,
   actuals: actualRowSchema,
+  daily_logs: dailyLogRowSchema,
+  city_tours: cityTourRowSchema,
 };
 
 export type EmployeeImportRow = z.infer<typeof employeeRowSchema>;
 export type TargetImportRow = z.infer<typeof targetRowSchema>;
 export type ActualImportRow = z.infer<typeof actualRowSchema>;
+export type DailyLogImportRow = z.infer<typeof dailyLogRowSchema>;
+export type CityTourImportRow = z.infer<typeof cityTourRowSchema>;
 
 export function validateRows(
   rows: Record<string, string>[],
-  type: ImportType
+  type: ImportType,
 ): ValidatedRow[] {
   const schema = schemas[type];
 
@@ -246,7 +343,7 @@ export function validateRows(
       rowNumber: index + 1,
       data: row,
       errors: result.error.errors.map(
-        (e) => `${e.path.join(".")}: ${e.message}`
+        (e) => `${e.path.join(".")}: ${e.message}`,
       ),
       isValid: false,
     };
