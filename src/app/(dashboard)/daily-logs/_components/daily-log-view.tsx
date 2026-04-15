@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useTransition, useCallback, useMemo } from "react";
+import { useState, useEffect, useTransition, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -119,6 +119,111 @@ function getAchievementColors(
   };
 }
 
+/* ── Column-resize hook ── */
+
+type ResizableKey = "employee" | "metrics";
+
+function useColumnResize(initial: Record<ResizableKey, number>) {
+  const [widths, setWidths] = useState(initial);
+  const [draggingKey, setDraggingKey] = useState<ResizableKey | null>(null);
+  const widthsRef = useRef(widths);
+  widthsRef.current = widths;
+  const active = useRef<{
+    key: ResizableKey;
+    startX: number;
+    startWidth: number;
+    minWidth: number;
+  } | null>(null);
+
+  const onResizeStart = useCallback(
+    (
+      key: ResizableKey,
+      e: React.PointerEvent<HTMLElement>,
+      minWidth = 120
+    ) => {
+      e.preventDefault();
+      e.stopPropagation();
+      e.currentTarget.setPointerCapture(e.pointerId);
+      active.current = {
+        key,
+        startX: e.clientX,
+        startWidth: widthsRef.current[key],
+        minWidth,
+      };
+      setDraggingKey(key);
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+    },
+    []
+  );
+
+  const onResizeMove = useCallback((e: React.PointerEvent<HTMLElement>) => {
+    if (!active.current) return;
+    const { key, startX, startWidth, minWidth } = active.current;
+    const next = Math.max(
+      minWidth,
+      Math.round(startWidth + (e.clientX - startX))
+    );
+    setWidths((prev) =>
+      prev[key] === next ? prev : { ...prev, [key]: next }
+    );
+  }, []);
+
+  const onResizeEnd = useCallback((e: React.PointerEvent<HTMLElement>) => {
+    if (!active.current) return;
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      /* already released */
+    }
+    active.current = null;
+    setDraggingKey(null);
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+  }, []);
+
+  return { widths, draggingKey, onResizeStart, onResizeMove, onResizeEnd };
+}
+
+/**
+ * Thin invisible divider at the right edge of a header cell; turns indigo on hover/drag.
+ * Pass `height` (pixels) to override the default 100%-of-parent behavior — needed when
+ * the handle sits in a `<th>` that only spans one row of a multi-row thead.
+ */
+function ResizeHandle({
+  onStart,
+  onMove,
+  onEnd,
+  label,
+  height,
+  isDragging = false,
+}: {
+  onStart: (e: React.PointerEvent<HTMLSpanElement>) => void;
+  onMove: (e: React.PointerEvent<HTMLSpanElement>) => void;
+  onEnd: (e: React.PointerEvent<HTMLSpanElement>) => void;
+  label: string;
+  height?: number;
+  isDragging?: boolean;
+}) {
+  return (
+    <span
+      onPointerDown={onStart}
+      onPointerMove={onMove}
+      onPointerUp={onEnd}
+      onPointerCancel={onEnd}
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={label}
+      style={{ height: height ?? "100%" }}
+      className={`absolute top-0 right-0 z-40 w-1.5 translate-x-1/2 cursor-col-resize select-none touch-none transition-colors ${
+        isDragging
+          ? "bg-indigo-600"
+          : "bg-transparent hover:bg-indigo-500/70"
+      }`}
+    />
+  );
+}
+
 /* ── Component ── */
 
 export function DailyLogView({
@@ -132,6 +237,33 @@ export function DailyLogView({
   const [isNavigating, startNavigation] = useTransition();
   const canEditTargets = userRole === "super_admin" || userRole === "manager";
   const canEdit = userRole !== "viewer";
+
+  // Two resizable major columns: Employee, and the Meetings+Calls "metrics" block.
+  // Remarks is the flex-fill trailing column.
+  const {
+    widths: colWidths,
+    draggingKey,
+    onResizeStart,
+    onResizeMove,
+    onResizeEnd,
+  } = useColumnResize({ employee: 260, metrics: 660 });
+  const REMARKS_MIN_WIDTH = 280;
+  const tableMinWidth =
+    colWidths.employee + colWidths.metrics + REMARKS_MIN_WIDTH;
+
+  // Measure thead height so the "metrics" handle (inside a single-row <th>) can
+  // span both header rows and match the Employee handle's visual height.
+  const theadRef = useRef<HTMLTableSectionElement>(null);
+  const [theadHeight, setTheadHeight] = useState(80);
+  useEffect(() => {
+    const el = theadRef.current;
+    if (!el) return;
+    const update = () => setTheadHeight(el.offsetHeight);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [searchFilter, setSearchFilter] = useState("");
@@ -389,8 +521,21 @@ export function DailyLogView({
       >
         <CardContent className="p-0">
           <div className="overflow-auto max-h-[calc(100vh-16rem)]">
-            <table className="w-full border-collapse text-sm">
-              <thead className="sticky top-0 z-20 bg-slate-100 dark:bg-slate-800">
+            <table
+              className="w-full border-collapse text-sm"
+              style={{ tableLayout: "fixed", minWidth: tableMinWidth }}
+            >
+              <colgroup>
+                <col style={{ width: colWidths.employee }} />
+                <col style={{ width: Math.round(colWidths.metrics / 6) }} />
+                <col style={{ width: Math.round(colWidths.metrics / 6) }} />
+                <col style={{ width: Math.round(colWidths.metrics / 6) }} />
+                <col style={{ width: Math.round(colWidths.metrics / 6) }} />
+                <col style={{ width: Math.round(colWidths.metrics / 6) }} />
+                <col style={{ width: Math.round(colWidths.metrics / 6) }} />
+                <col />
+              </colgroup>
+              <thead ref={theadRef} className="sticky top-0 z-20 bg-slate-100 dark:bg-slate-800">
                 {/* Group headers */}
                 <tr>
                   <th
@@ -398,6 +543,13 @@ export function DailyLogView({
                     rowSpan={2}
                   >
                     Employee
+                    <ResizeHandle
+                      onStart={(e) => onResizeStart("employee", e, 180)}
+                      onMove={onResizeMove}
+                      onEnd={onResizeEnd}
+                      label="Resize Employee column"
+                      isDragging={draggingKey === "employee"}
+                    />
                   </th>
                   <th
                     className="text-center px-2 pt-3 pb-1.5 text-sm font-semibold text-slate-700 dark:text-slate-300 tracking-wide border-r-2 border-r-slate-300 dark:border-r-slate-600 border-b border-b-slate-200 dark:border-b-slate-700 bg-slate-100 dark:bg-slate-800"
@@ -406,10 +558,18 @@ export function DailyLogView({
                     Meetings
                   </th>
                   <th
-                    className="text-center px-2 pt-3 pb-1.5 text-sm font-semibold text-slate-700 dark:text-slate-300 tracking-wide border-r-2 border-r-slate-300 dark:border-r-slate-600 border-b border-b-slate-200 dark:border-b-slate-700 bg-slate-100 dark:bg-slate-800"
+                    className="relative text-center px-2 pt-3 pb-1.5 text-sm font-semibold text-slate-700 dark:text-slate-300 tracking-wide border-r-2 border-r-slate-300 dark:border-r-slate-600 border-b border-b-slate-200 dark:border-b-slate-700 bg-slate-100 dark:bg-slate-800"
                     colSpan={2}
                   >
                     Calls
+                    <ResizeHandle
+                      onStart={(e) => onResizeStart("metrics", e, 480)}
+                      onMove={onResizeMove}
+                      onEnd={onResizeEnd}
+                      label="Resize Meetings and Calls columns"
+                      height={theadHeight}
+                      isDragging={draggingKey === "metrics"}
+                    />
                   </th>
                   <th
                     className="text-center px-2 pt-3 pb-1.5 text-sm font-semibold text-slate-700 dark:text-slate-300 tracking-wide bg-slate-100 dark:bg-slate-800 border-b-2 border-b-slate-300 dark:border-b-slate-600"
@@ -579,8 +739,16 @@ function EmployeeRow({
             <div className="font-medium whitespace-nowrap leading-tight">
               {employee.name}
             </div>
-            <div className="text-[11px] text-muted-foreground leading-tight">
+            <div className="truncate text-[11px] text-muted-foreground leading-tight">
               {employee.emp_id}
+              {employee.location ? (
+                <>
+                  <span aria-hidden className="mx-1.5 text-muted-foreground/60">
+                    &bull;
+                  </span>
+                  {employee.location}
+                </>
+              ) : null}
             </div>
           </div>
           {isDirty && (
@@ -702,7 +870,7 @@ function EmployeeRow({
           value={values.remarks}
           onChange={(e) => onRemarkChange(employee.id, e.target.value)}
           disabled={!canEdit}
-          className={`${INPUT_BASE} w-32 text-left px-2 [text-align:left]`}
+          className={`${INPUT_BASE} !w-full text-left px-2 [text-align:left]`}
           placeholder="Add note..."
         />
       </td>

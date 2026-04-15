@@ -31,6 +31,7 @@ export function getColumns(isCurrentMonth?: boolean): ColumnDef<EmployeeMonthlyD
       ),
       cell: ({ row }) => {
         const name = row.original.employee.name;
+        const { emp_id, location } = row.original.employee;
         return (
           <div className="flex items-center gap-3">
             <div
@@ -38,10 +39,18 @@ export function getColumns(isCurrentMonth?: boolean): ColumnDef<EmployeeMonthlyD
             >
               {getInitials(name)}
             </div>
-            <div>
-              <div className="font-medium leading-tight">{name}</div>
-              <div className="text-xs text-muted-foreground leading-tight">
-                {row.original.employee.emp_id}
+            <div className="min-w-0">
+              <div className="truncate font-medium leading-tight">{name}</div>
+              <div className="truncate text-xs text-muted-foreground leading-tight">
+                {emp_id}
+                {location ? (
+                  <>
+                    <span aria-hidden className="mx-1.5 text-muted-foreground/60">
+                      &bull;
+                    </span>
+                    {location}
+                  </>
+                ) : null}
               </div>
             </div>
           </div>
