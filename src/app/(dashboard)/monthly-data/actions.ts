@@ -197,3 +197,64 @@ export async function addCity(name: string): Promise<ActionResult> {
     return { error: (e as Error).message };
   }
 }
+
+export async function updateCity(
+  id: string,
+  name: string
+): Promise<ActionResult> {
+  const trimmed = name.trim();
+  if (!trimmed) return { error: "City name cannot be empty" };
+  if (trimmed.length > 64) return { error: "City name is too long" };
+
+  try {
+    const { supabase, role } = await getAuthenticatedRole();
+
+    if (role !== "super_admin") {
+      return { error: "Only Super Admins can edit cities" };
+    }
+
+    const { error } = await supabase
+      .from("cities")
+      .update({ name: trimmed })
+      .eq("id", id);
+
+    if (error) {
+      if (error.code === "23505") {
+        return { error: `"${trimmed}" already exists in the pool` };
+      }
+      return { error: error.message };
+    }
+
+    revalidatePath("/monthly-data");
+    return { success: true };
+  } catch (e) {
+    return { error: (e as Error).message };
+  }
+}
+
+export async function deleteCity(id: string): Promise<ActionResult> {
+  try {
+    const { supabase, role } = await getAuthenticatedRole();
+
+    if (role !== "super_admin") {
+      return { error: "Only Super Admins can delete cities" };
+    }
+
+    const { error } = await supabase.from("cities").delete().eq("id", id);
+
+    if (error) {
+      if (error.code === "23503") {
+        return {
+          error:
+            "Cannot delete this city because it is currently assigned to one or more employees/records.",
+        };
+      }
+      return { error: error.message };
+    }
+
+    revalidatePath("/monthly-data");
+    return { success: true };
+  } catch (e) {
+    return { error: (e as Error).message };
+  }
+}
