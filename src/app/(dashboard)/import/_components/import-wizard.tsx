@@ -177,9 +177,8 @@ const CATEGORY_LABELS: Record<ModuleCategory, string> = {
 
 const CATEGORY_ORDER: ModuleCategory[] = ["master", "monthly", "daily"];
 
-// Launch restriction: only Employee imports are enabled for now.
-// Re-enable the other modules by adding "monthly" and/or "daily" here.
-const VISIBLE_CATEGORIES: ModuleCategory[] = ["master"];
+// Which module categories show in the wizard. Remove entries to hide a group.
+const VISIBLE_CATEGORIES: ModuleCategory[] = ["master", "monthly", "daily"];
 
 /* ── Component ── */
 
