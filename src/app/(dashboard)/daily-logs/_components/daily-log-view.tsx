@@ -339,7 +339,7 @@ export function DailyLogView({
       const num = Math.max(0, parseInt(value) || 0);
       setEntries((prev) => ({
         ...prev,
-        [empId]: { ...prev[empId], [field]: num },
+        [empId]: { ...(prev[empId] ?? EMPTY_ENTRY), [field]: num },
       }));
     },
     []
@@ -349,7 +349,7 @@ export function DailyLogView({
     (empId: string, value: string) => {
       setEntries((prev) => ({
         ...prev,
-        [empId]: { ...prev[empId], remarks: value },
+        [empId]: { ...(prev[empId] ?? EMPTY_ENTRY), remarks: value },
       }));
     },
     []
@@ -605,7 +605,7 @@ export function DailyLogView({
                   <EmployeeRow
                     key={emp.id}
                     employee={emp}
-                    values={entries[emp.id]}
+                    values={entries[emp.id] ?? EMPTY_ENTRY}
                     isDirty={dirty.has(emp.id)}
                     canEditTargets={canEditTargets}
                     canEdit={canEdit}
