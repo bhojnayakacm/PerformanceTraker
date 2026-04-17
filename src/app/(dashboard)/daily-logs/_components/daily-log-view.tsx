@@ -58,15 +58,15 @@ type Props = {
 
 /* ── Helpers ── */
 
-function toEntryValues(dm: DailyMetric | undefined): EntryValues {
+function toEntryValues(dm: DailyMetric | undefined | null): EntryValues {
   if (!dm) return { ...EMPTY_ENTRY };
   return {
-    target_calls: dm.target_calls,
-    target_total_meetings: dm.target_total_meetings,
-    actual_calls: dm.actual_calls,
-    actual_architect_meetings: dm.actual_architect_meetings,
-    actual_client_meetings: dm.actual_client_meetings,
-    actual_site_visits: dm.actual_site_visits,
+    target_calls: dm.target_calls ?? 0,
+    target_total_meetings: dm.target_total_meetings ?? 0,
+    actual_calls: dm.actual_calls ?? 0,
+    actual_architect_meetings: dm.actual_architect_meetings ?? 0,
+    actual_client_meetings: dm.actual_client_meetings ?? 0,
+    actual_site_visits: dm.actual_site_visits ?? 0,
     remarks: dm.remarks ?? "",
   };
 }
@@ -97,26 +97,35 @@ function formatShortDate(isoDate: string): string {
   return `${SHORT_DAYS[dow]}, ${d} ${LONG_MONTHS[m - 1]} ${y}`;
 }
 
+// Literal full class strings — Tailwind v4 source-scanning must see them verbatim.
+// `!` important prefix ensures cell bg wins over <tr>-level backgrounds.
+const TIER_CLASSES = {
+  success: {
+    bg: "!bg-emerald-50/60 dark:!bg-emerald-950/20",
+    text: "font-medium text-emerald-700 dark:text-emerald-400",
+  },
+  warning: {
+    bg: "!bg-yellow-100 dark:!bg-yellow-950/40",
+    text: "font-semibold text-yellow-800 dark:text-yellow-300",
+  },
+  danger: {
+    bg: "!bg-red-100 dark:!bg-red-950/40",
+    text: "font-semibold text-red-700 dark:text-red-300",
+  },
+  none: { bg: "", text: "" },
+} as const;
+
 function getAchievementColors(
   target: number,
   actual: number
 ): { bg: string; text: string } {
-  if (target <= 0 || actual <= 0) return { bg: "", text: "" };
-  const ratio = actual / target;
-  if (ratio >= 0.9)
-    return {
-      bg: "bg-emerald-50/60 dark:bg-emerald-950/20",
-      text: "font-medium text-emerald-700 dark:text-emerald-400",
-    };
-  if (ratio >= 0.7)
-    return {
-      bg: "bg-amber-50/60 dark:bg-amber-950/20",
-      text: "font-medium text-amber-700 dark:text-amber-400",
-    };
-  return {
-    bg: "bg-red-50/50 dark:bg-red-950/20",
-    text: "font-medium text-red-600 dark:text-red-400",
-  };
+  const t = Number(target) || 0;
+  const a = Number(actual) || 0;
+  if (t <= 0 || a <= 0) return TIER_CLASSES.none;
+  const ratio = a / t;
+  if (ratio >= 0.9) return TIER_CLASSES.success;
+  if (ratio >= 0.7) return TIER_CLASSES.warning;
+  return TIER_CLASSES.danger;
 }
 
 /* ── Column-resize hook ── */
@@ -207,6 +216,7 @@ function ResizeHandle({
 }) {
   return (
     <span
+      suppressHydrationWarning
       onPointerDown={onStart}
       onPointerMove={onMove}
       onPointerUp={onEnd}
@@ -543,13 +553,15 @@ export function DailyLogView({
                     rowSpan={2}
                   >
                     Employee
-                    <ResizeHandle
-                      onStart={(e) => onResizeStart("employee", e, 180)}
-                      onMove={onResizeMove}
-                      onEnd={onResizeEnd}
-                      label="Resize Employee column"
-                      isDragging={draggingKey === "employee"}
-                    />
+                    {mounted && (
+                      <ResizeHandle
+                        onStart={(e) => onResizeStart("employee", e, 180)}
+                        onMove={onResizeMove}
+                        onEnd={onResizeEnd}
+                        label="Resize Employee column"
+                        isDragging={draggingKey === "employee"}
+                      />
+                    )}
                   </th>
                   <th
                     className="text-center px-2 pt-3 pb-1.5 text-sm font-semibold text-slate-700 dark:text-slate-300 tracking-wide border-r-2 border-r-slate-300 dark:border-r-slate-600 border-b border-b-slate-200 dark:border-b-slate-700 bg-slate-100 dark:bg-slate-800"
@@ -562,14 +574,16 @@ export function DailyLogView({
                     colSpan={2}
                   >
                     Calls
-                    <ResizeHandle
-                      onStart={(e) => onResizeStart("metrics", e, 480)}
-                      onMove={onResizeMove}
-                      onEnd={onResizeEnd}
-                      label="Resize Meetings and Calls columns"
-                      height={theadHeight}
-                      isDragging={draggingKey === "metrics"}
-                    />
+                    {mounted && (
+                      <ResizeHandle
+                        onStart={(e) => onResizeStart("metrics", e, 480)}
+                        onMove={onResizeMove}
+                        onEnd={onResizeEnd}
+                        label="Resize Meetings and Calls columns"
+                        height={theadHeight}
+                        isDragging={draggingKey === "metrics"}
+                      />
+                    )}
                   </th>
                   <th
                     className="text-center px-2 pt-3 pb-1.5 text-sm font-semibold text-slate-700 dark:text-slate-300 tracking-wide bg-slate-100 dark:bg-slate-800 border-b-2 border-b-slate-300 dark:border-b-slate-600"
@@ -659,11 +673,11 @@ export function DailyLogView({
             <span>&ge;90%</span>
           </div>
           <div className="flex items-center gap-1.5">
-            <div className="h-3 w-3 rounded-sm bg-amber-50 border border-amber-300" />
+            <div className="h-3 w-3 rounded-sm bg-yellow-100 border border-yellow-400" />
             <span>70&ndash;89%</span>
           </div>
           <div className="flex items-center gap-1.5">
-            <div className="h-3 w-3 rounded-sm bg-red-50 border border-red-300" />
+            <div className="h-3 w-3 rounded-sm bg-red-100 border border-red-500" />
             <span>&lt;70%</span>
           </div>
         </div>
