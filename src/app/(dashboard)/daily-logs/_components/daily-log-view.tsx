@@ -101,8 +101,8 @@ function formatShortDate(isoDate: string): string {
 // `!` important prefix ensures cell bg wins over <tr>-level backgrounds.
 const TIER_CLASSES = {
   success: {
-    bg: "!bg-emerald-50/60 dark:!bg-emerald-950/20",
-    text: "font-medium text-emerald-700 dark:text-emerald-400",
+    bg: "!bg-emerald-100 dark:!bg-emerald-950/40",
+    text: "font-semibold text-emerald-800 dark:text-emerald-300",
   },
   warning: {
     bg: "!bg-yellow-100 dark:!bg-yellow-950/40",
@@ -669,7 +669,7 @@ export function DailyLogView({
           </span>
           <span>&middot;</span>
           <div className="flex items-center gap-1.5">
-            <div className="h-3 w-3 rounded-sm bg-emerald-50 border border-emerald-300" />
+            <div className="h-3 w-3 rounded-sm bg-emerald-100 border border-emerald-500" />
             <span>&ge;90%</span>
           </div>
           <div className="flex items-center gap-1.5">
