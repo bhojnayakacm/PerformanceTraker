@@ -43,17 +43,17 @@ const TEMPLATES: Record<ImportType, { headers: string[]; rows: string[][] }> = {
   },
   targets: {
     headers: [
-      "emp_id",
+      "name",
       "month",
       "year",
       "target_client_visits",
       "target_dispatched_sqft",
     ],
-    rows: [["ACM01157", "3", "2026", "10", "500"]],
+    rows: [["John Doe", "3", "2026", "10", "500"]],
   },
   actuals: {
     headers: [
-      "emp_id",
+      "name",
       "month",
       "year",
       "actual_client_visits",
@@ -71,7 +71,7 @@ const TEMPLATES: Record<ImportType, { headers: string[]; rows: string[][] }> = {
     ],
     rows: [
       [
-        "ACM01157",
+        "John Doe",
         "3",
         "2026",
         "8",
@@ -91,7 +91,7 @@ const TEMPLATES: Record<ImportType, { headers: string[]; rows: string[][] }> = {
   },
   daily_logs: {
     headers: [
-      "emp_id",
+      "name",
       "date",
       "target_calls",
       "target_total_meetings",
@@ -102,14 +102,14 @@ const TEMPLATES: Record<ImportType, { headers: string[]; rows: string[][] }> = {
       "remarks",
     ],
     rows: [
-      ["ACM01157", "2026-03-02", "5", "3", "5", "1", "1", "1", ""],
-      ["ACM01157", "2026-03-03", "5", "3", "0", "0", "0", "0", "Public holiday"],
-      ["ACM01157", "2026-03-04", "5", "3", "6", "2", "0", "1", ""],
+      ["John Doe", "2026-03-02", "5", "3", "5", "1", "1", "1", ""],
+      ["John Doe", "2026-03-03", "5", "3", "0", "0", "0", "0", "Public holiday"],
+      ["John Doe", "2026-03-04", "5", "3", "6", "2", "0", "1", ""],
     ],
   },
   city_tours: {
     headers: [
-      "emp_id",
+      "name",
       "month",
       "year",
       "city_name",
@@ -117,9 +117,9 @@ const TEMPLATES: Record<ImportType, { headers: string[]; rows: string[][] }> = {
       "actual_days",
     ],
     rows: [
-      ["ACM01157", "3", "2026", "Delhi", "3", "2"],
-      ["ACM01157", "3", "2026", "Mumbai", "2", "2"],
-      ["ACM01157", "3", "2026", "Bangalore", "1", "0"],
+      ["John Doe", "3", "2026", "Delhi", "3", "2"],
+      ["John Doe", "3", "2026", "Mumbai", "2", "2"],
+      ["John Doe", "3", "2026", "Bangalore", "1", "0"],
     ],
   },
 };
@@ -241,9 +241,17 @@ const employeeRowSchema = z.object({
   state: z.string().trim().optional().or(z.literal("")),
 });
 
+// Shared: non-employee bulk imports reference employees by exact `name`,
+// which is guaranteed unique by the `employees_name_unique` constraint
+// (migration 0011_unique_employee_name.sql).
+const employeeNameField = z
+  .string()
+  .trim()
+  .min(2, "Employee name must be at least 2 characters");
+
 // Stripped: trigger-managed fields removed; target_travelling_cities moved to City Tours.
 const targetRowSchema = z.object({
-  emp_id: z.string().trim().min(1, "Emp ID is required"),
+  name: employeeNameField,
   ...monthYear,
   target_client_visits: metric,
   target_dispatched_sqft: metric,
@@ -252,7 +260,7 @@ const targetRowSchema = z.object({
 // Stripped: actual_calls / *_meetings / actual_site_visits are trigger-managed.
 // actual_net_sale + actual_dispatched_sqft are GENERATED columns — never included.
 const actualRowSchema = z.object({
-  emp_id: z.string().trim().min(1, "Emp ID is required"),
+  name: employeeNameField,
   ...monthYear,
   actual_client_visits: metric,
   actual_conversions: metric,
@@ -270,7 +278,7 @@ const actualRowSchema = z.object({
 
 // Daily grain — feeds the trigger that rolls up to monthly_actuals/targets.
 const dailyLogRowSchema = z.object({
-  emp_id: z.string().trim().min(1, "Emp ID is required"),
+  name: employeeNameField,
   date: dateField,
   target_calls: metric,
   target_total_meetings: metric,
@@ -288,7 +296,7 @@ const dailyLogRowSchema = z.object({
 
 // City names are normalized server-side; here we just enforce non-empty.
 const cityTourRowSchema = z.object({
-  emp_id: z.string().trim().min(1, "Emp ID is required"),
+  name: employeeNameField,
   ...monthYear,
   city_name: z
     .string()

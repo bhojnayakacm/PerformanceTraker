@@ -67,19 +67,25 @@ export async function importEmployees(
 }
 
 /* ─────────────────────────────────────────────────────────────
-   Helper — emp_id → employee_id resolution
+   Helper — name → employee_id resolution
+   (Exact case-sensitive match. The `employees_name_unique`
+    constraint — migration 0011 — guarantees at most one hit
+    per name.)
 ───────────────────────────────────────────────────────────── */
 
-async function resolveEmployees(
+async function resolveEmployeesByName(
   supabase: Awaited<ReturnType<typeof assertSuperAdmin>>,
-  empIds: string[],
+  names: string[],
 ) {
-  const unique = [...new Set(empIds)];
+  const unique = [...new Set(names.map((n) => n.trim()).filter(Boolean))];
+  if (unique.length === 0) return new Map<string, string>();
+
   const { data } = await supabase
     .from("employees")
-    .select("id, emp_id")
-    .in("emp_id", unique);
-  return new Map(data?.map((e) => [e.emp_id, e.id]) ?? []);
+    .select("id, name")
+    .in("name", unique);
+
+  return new Map(data?.map((e) => [e.name, e.id]) ?? []);
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -90,7 +96,7 @@ async function resolveEmployees(
 
 export async function importTargets(
   rows: {
-    emp_id: string;
+    name: string;
     month: number;
     year: number;
     target_client_visits: number;
@@ -99,19 +105,20 @@ export async function importTargets(
 ): Promise<ImportResult> {
   try {
     const supabase = await assertSuperAdmin();
-    const empMap = await resolveEmployees(
+    const empMap = await resolveEmployeesByName(
       supabase,
-      rows.map((r) => r.emp_id),
+      rows.map((r) => r.name),
     );
 
     const errors: string[] = [];
     const validRows: TablesInsert<"monthly_targets">[] = [];
 
-    for (const row of rows) {
-      const employeeId = empMap.get(row.emp_id);
+    rows.forEach((row, idx) => {
+      const key = row.name.trim();
+      const employeeId = empMap.get(key);
       if (!employeeId) {
-        errors.push(`Employee "${row.emp_id}" not found in database`);
-        continue;
+        errors.push(`Row ${idx + 1}: Employee "${row.name}" not found in system`);
+        return;
       }
 
       validRows.push({
@@ -121,7 +128,7 @@ export async function importTargets(
         target_client_visits: row.target_client_visits,
         target_dispatched_sqft: row.target_dispatched_sqft,
       });
-    }
+    });
 
     if (validRows.length > 0) {
       const { error } = await supabase
@@ -153,7 +160,7 @@ export async function importTargets(
 
 export async function importActuals(
   rows: {
-    emp_id: string;
+    name: string;
     month: number;
     year: number;
     actual_client_visits: number;
@@ -172,19 +179,20 @@ export async function importActuals(
 ): Promise<ImportResult> {
   try {
     const supabase = await assertSuperAdmin();
-    const empMap = await resolveEmployees(
+    const empMap = await resolveEmployeesByName(
       supabase,
-      rows.map((r) => r.emp_id),
+      rows.map((r) => r.name),
     );
 
     const errors: string[] = [];
     const validRows: TablesInsert<"monthly_actuals">[] = [];
 
-    for (const row of rows) {
-      const employeeId = empMap.get(row.emp_id);
+    rows.forEach((row, idx) => {
+      const key = row.name.trim();
+      const employeeId = empMap.get(key);
       if (!employeeId) {
-        errors.push(`Employee "${row.emp_id}" not found in database`);
-        continue;
+        errors.push(`Row ${idx + 1}: Employee "${row.name}" not found in system`);
+        return;
       }
 
       validRows.push({
@@ -204,7 +212,7 @@ export async function importActuals(
         sales_promotion: row.sales_promotion,
         total_costing: row.total_costing,
       });
-    }
+    });
 
     if (validRows.length > 0) {
       const { error } = await supabase
@@ -237,7 +245,7 @@ export async function importActuals(
 
 export async function importDailyLogs(
   rows: {
-    emp_id: string;
+    name: string;
     date: string;
     target_calls: number;
     target_total_meetings: number;
@@ -250,21 +258,22 @@ export async function importDailyLogs(
 ): Promise<ImportResult> {
   try {
     const supabase = await assertSuperAdmin();
-    const empMap = await resolveEmployees(
+    const empMap = await resolveEmployeesByName(
       supabase,
-      rows.map((r) => r.emp_id),
+      rows.map((r) => r.name),
     );
 
     const errors: string[] = [];
     const validRows: TablesInsert<"daily_metrics">[] = [];
 
-    for (const row of rows) {
-      const employeeId = empMap.get(row.emp_id);
+    rows.forEach((row, idx) => {
+      const key = row.name.trim();
+      const employeeId = empMap.get(key);
       if (!employeeId) {
         errors.push(
-          `Employee "${row.emp_id}" not found (date ${row.date} skipped)`,
+          `Row ${idx + 1}: Employee "${row.name}" not found in system (date ${row.date} skipped)`,
         );
-        continue;
+        return;
       }
 
       validRows.push({
@@ -278,7 +287,7 @@ export async function importDailyLogs(
         actual_site_visits: row.actual_site_visits,
         remarks: row.remarks?.trim() ? row.remarks.trim() : null,
       });
-    }
+    });
 
     if (validRows.length > 0) {
       const { error } = await supabase
@@ -320,7 +329,7 @@ function titleCase(input: string): string {
 
 export async function importCityTours(
   rows: {
-    emp_id: string;
+    name: string;
     month: number;
     year: number;
     city_name: string;
@@ -330,9 +339,9 @@ export async function importCityTours(
 ): Promise<ImportResult> {
   try {
     const supabase = await assertSuperAdmin();
-    const empMap = await resolveEmployees(
+    const empMap = await resolveEmployeesByName(
       supabase,
-      rows.map((r) => r.emp_id),
+      rows.map((r) => r.name),
     );
 
     // ── Resolve city_name → city_id (case-insensitive, auto-create) ──
@@ -392,19 +401,20 @@ export async function importCityTours(
     const errors: string[] = [];
     const validRows: TablesInsert<"monthly_city_tours">[] = [];
 
-    for (const row of rows) {
-      const employeeId = empMap.get(row.emp_id);
+    rows.forEach((row, idx) => {
+      const key = row.name.trim();
+      const employeeId = empMap.get(key);
       if (!employeeId) {
-        errors.push(`Employee "${row.emp_id}" not found in database`);
-        continue;
+        errors.push(`Row ${idx + 1}: Employee "${row.name}" not found in system`);
+        return;
       }
 
       const cityId = cityMap.get(titleCase(row.city_name).toLowerCase());
       if (!cityId) {
         errors.push(
-          `City "${row.city_name}" could not be resolved or created`,
+          `Row ${idx + 1}: City "${row.city_name}" could not be resolved or created`,
         );
-        continue;
+        return;
       }
 
       validRows.push({
@@ -415,7 +425,7 @@ export async function importCityTours(
         target_days: row.target_days,
         actual_days: row.actual_days,
       });
-    }
+    });
 
     if (validRows.length > 0) {
       const { error } = await supabase
