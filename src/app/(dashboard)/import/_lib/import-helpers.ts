@@ -67,7 +67,6 @@ const TEMPLATES: Record<ImportType, { headers: string[]; rows: string[][] }> = {
       "tada",
       "incentive",
       "sales_promotion",
-      "total_costing",
     ],
     rows: [
       [
@@ -85,7 +84,6 @@ const TEMPLATES: Record<ImportType, { headers: string[]; rows: string[][] }> = {
         "10000",
         "5000",
         "3000",
-        "180000",
       ],
     ],
   },
@@ -324,6 +322,8 @@ const targetRowSchema = z.object({
 
 // Stripped: actual_calls / *_meetings / actual_site_visits are trigger-managed.
 // actual_net_sale + actual_dispatched_sqft are GENERATED columns — never included.
+// total_costing is auto-computed server-side as (salary + tada + incentive) to
+// mirror the manual entry form — sales_promotion is tracked but NOT summed in.
 const actualRowSchema = z.object({
   name: employeeNameField,
   ...monthYear,
@@ -338,7 +338,6 @@ const actualRowSchema = z.object({
   tada: metric,
   incentive: metric,
   sales_promotion: metric,
-  total_costing: metric,
 });
 
 // Daily grain — feeds the trigger that rolls up to monthly_actuals/targets.

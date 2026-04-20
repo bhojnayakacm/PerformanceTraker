@@ -174,7 +174,6 @@ export async function importActuals(
     tada: number;
     incentive: number;
     sales_promotion: number;
-    total_costing: number;
   }[],
 ): Promise<ImportResult> {
   try {
@@ -195,6 +194,13 @@ export async function importActuals(
         return;
       }
 
+      // Mirror manual entry: total_costing = salary + tada + incentive.
+      // sales_promotion is tracked separately and intentionally excluded.
+      const salary = row.salary ?? 0;
+      const tada = row.tada ?? 0;
+      const incentive = row.incentive ?? 0;
+      const salesPromotion = row.sales_promotion ?? 0;
+
       validRows.push({
         employee_id: employeeId,
         month: row.month,
@@ -206,11 +212,11 @@ export async function importActuals(
         actual_tile: row.actual_tile,
         actual_retail: row.actual_retail,
         actual_return: row.actual_return,
-        salary: row.salary,
-        tada: row.tada,
-        incentive: row.incentive,
-        sales_promotion: row.sales_promotion,
-        total_costing: row.total_costing,
+        salary,
+        tada,
+        incentive,
+        sales_promotion: salesPromotion,
+        total_costing: salary + tada + incentive,
       });
     });
 

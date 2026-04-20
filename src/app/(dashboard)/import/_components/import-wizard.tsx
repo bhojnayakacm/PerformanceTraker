@@ -113,7 +113,7 @@ const MODULES: ModuleConfig[] = [
     description: "Sales, costing & financial actuals",
     Icon: BarChart3,
     category: "monthly",
-    hint: "Matched by employee name + month + year. Names must exactly match an existing employee. Daily metrics are auto-rolled-up; actual_net_sale and actual_dispatched_sqft are computed automatically.",
+    hint: "Matched by employee name + month + year. Names must exactly match an existing employee. Daily metrics roll up automatically; actual_net_sale and actual_dispatched_sqft are generated columns; total_costing is auto-computed as salary + tada + incentive (sales_promotion excluded).",
     columns: [
       { name: "name", required: true },
       { name: "month", required: true },
@@ -129,7 +129,6 @@ const MODULES: ModuleConfig[] = [
       { name: "tada", required: true },
       { name: "incentive", required: true },
       { name: "sales_promotion", required: true },
-      { name: "total_costing", required: true },
     ],
   },
   {
