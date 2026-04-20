@@ -111,10 +111,18 @@ type TintName = keyof typeof TINTS;
 type LucideIcon = ComponentType<{ className?: string }>;
 
 type CityTourEntry = {
+  _uid: string;
   city_id: string | null;
   target_days: number;
   actual_days: number;
 };
+
+// Stable per-row identity for React keys. Uses the DB row's id when the
+// tour is already persisted, and a fresh UUID for padded/new blocks.
+const newUid = () =>
+  typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `uid-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
 type Props = {
   open: boolean;
@@ -127,28 +135,31 @@ type Props = {
 };
 
 function getDefaultValues(data: EmployeeMonthlyData | null): MonthlyDataInput {
-  const targetCount = data?.target?.target_travelling_cities ?? 0;
+  const storedCount = data?.target?.target_travelling_cities ?? 0;
   const existingTours = (data?.cityTours ?? []).map((t) => ({
     city_id: t.city_id,
     target_days: t.target_days,
     actual_days: t.actual_days,
   }));
 
-  // Align city_tours length with target_travelling_cities so the Zod
-  // .refine() check (length === count) doesn't silently fail on mount.
-  let alignedTours = existingTours;
-  if (existingTours.length < targetCount) {
-    alignedTours = [
-      ...existingTours,
-      ...Array.from({ length: targetCount - existingTours.length }, () => ({
-        city_id: "" as string, // placeholder — caught by manual pre-flight
-        target_days: 0,
-        actual_days: 0,
-      })),
-    ];
-  } else if (existingTours.length > targetCount) {
-    alignedTours = existingTours.slice(0, targetCount);
-  }
+  // Reconcile: CSV bulk-import writes rows to monthly_city_tours but does not
+  // update monthly_targets.target_travelling_cities. Old code did
+  // `existing.slice(0, storedCount)` which silently dropped every tour when
+  // storedCount was 0 — that was the "empty dialog after import" bug.
+  // Take the larger of the two so persisted tours always survive.
+  const targetCount = Math.max(storedCount, existingTours.length);
+
+  const alignedTours =
+    existingTours.length >= targetCount
+      ? existingTours
+      : [
+          ...existingTours,
+          ...Array.from({ length: targetCount - existingTours.length }, () => ({
+            city_id: "" as string,
+            target_days: 0,
+            actual_days: 0,
+          })),
+        ];
 
   return {
     target_client_visits: data?.target?.target_client_visits ?? 0,
@@ -176,25 +187,26 @@ function getDefaultValues(data: EmployeeMonthlyData | null): MonthlyDataInput {
 function getInitialCityTours(
   data: EmployeeMonthlyData | null
 ): CityTourEntry[] {
-  const targetCount = data?.target?.target_travelling_cities ?? 0;
+  const storedCount = data?.target?.target_travelling_cities ?? 0;
   const existing = (data?.cityTours ?? []).map<CityTourEntry>((t) => ({
+    _uid: t.id,
     city_id: t.city_id,
     target_days: t.target_days,
     actual_days: t.actual_days,
   }));
 
-  if (existing.length === targetCount) return existing;
-  if (existing.length < targetCount) {
-    return [
-      ...existing,
-      ...Array.from({ length: targetCount - existing.length }, () => ({
-        city_id: null,
-        target_days: 0,
-        actual_days: 0,
-      })),
-    ];
-  }
-  return existing.slice(0, targetCount);
+  const targetCount = Math.max(storedCount, existing.length);
+
+  if (existing.length >= targetCount) return existing;
+  return [
+    ...existing,
+    ...Array.from({ length: targetCount - existing.length }, () => ({
+      _uid: newUid(),
+      city_id: null,
+      target_days: 0,
+      actual_days: 0,
+    })),
+  ];
 }
 
 const formatCurrency = (n: number) =>
@@ -300,6 +312,7 @@ export function EmployeeDetailDialog({
           return [
             ...prev,
             ...Array.from({ length: next - prev.length }, () => ({
+              _uid: newUid(),
               city_id: null,
               target_days: 0,
               actual_days: 0,
@@ -760,7 +773,7 @@ export function EmployeeDetailDialog({
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           {cityTours.map((tour, i) => (
                             <CityBlock
-                              key={i}
+                              key={tour._uid}
                               index={i}
                               cities={cities}
                               tour={tour}

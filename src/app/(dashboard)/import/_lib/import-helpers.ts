@@ -115,9 +115,9 @@ const TEMPLATES: Record<ImportType, { headers: string[]; rows: string[][] }> = {
       "actual_days",
     ],
     rows: [
-      ["John Doe", "3", "2026", "Delhi", "3", "2"],
+      ["John Doe", "3", "2026", "Delhi", "3", "2.5"],
       ["John Doe", "3", "2026", "Mumbai", "2", "2"],
-      ["John Doe", "3", "2026", "Bangalore", "1", "0"],
+      ["John Doe", "3", "2026", "Bangalore", "1", "0.5"],
     ],
   },
 };
@@ -359,6 +359,7 @@ const dailyLogRowSchema = z.object({
 });
 
 // City names are normalized server-side; here we just enforce non-empty.
+// Days are NUMERIC(5,2) in the DB (migration 0012) so 0.5 half-days are valid.
 const cityTourRowSchema = z.object({
   name: employeeNameField,
   ...monthYear,
@@ -369,13 +370,11 @@ const cityTourRowSchema = z.object({
     .max(80, "City name must be ≤ 80 characters"),
   target_days: z.coerce
     .number()
-    .int("target_days must be a whole number")
     .min(0)
     .max(31, "target_days must be ≤ 31")
     .default(0),
   actual_days: z.coerce
     .number()
-    .int("actual_days must be a whole number")
     .min(0)
     .max(31, "actual_days must be ≤ 31")
     .default(0),

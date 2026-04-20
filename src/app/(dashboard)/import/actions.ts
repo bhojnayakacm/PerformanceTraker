@@ -443,6 +443,63 @@ export async function importCityTours(
           notices,
         };
       }
+
+      // ── Sync monthly_targets.target_travelling_cities ──
+      // The manual UI's EmployeeDetailDialog aligns the visible tour list to
+      // monthly_targets.target_travelling_cities. If we only write to
+      // monthly_city_tours and leave the counter at 0, the dialog renders
+      // "No travelling cities set" even though the rows exist. Bump the
+      // counter up to match the actual distinct-city count per period.
+      //
+      // Only bumps UP (GREATEST(existing, imported)) so we never clobber a
+      // higher plan the manager already set manually.
+      const countByKey = new Map<string, number>();
+      for (const r of validRows) {
+        const key = `${r.employee_id}|${r.month}|${r.year}`;
+        countByKey.set(key, (countByKey.get(key) ?? 0) + 1);
+      }
+
+      const keyParts = [...countByKey.keys()].map((k) => k.split("|"));
+      const employeeIds = [...new Set(keyParts.map(([eid]) => eid))];
+      const months = [...new Set(keyParts.map(([, m]) => Number(m)))];
+      const years = [...new Set(keyParts.map(([, , y]) => Number(y)))];
+
+      const { data: existingTargets } = await supabase
+        .from("monthly_targets")
+        .select("employee_id, month, year, target_travelling_cities")
+        .in("employee_id", employeeIds)
+        .in("month", months)
+        .in("year", years);
+
+      const existingMap = new Map(
+        (existingTargets ?? []).map((t) => [
+          `${t.employee_id}|${t.month}|${t.year}`,
+          t.target_travelling_cities ?? 0,
+        ]),
+      );
+
+      const targetUpserts = [...countByKey.entries()].map(([key, count]) => {
+        const [employee_id, m, y] = key.split("|");
+        const existing = existingMap.get(key) ?? 0;
+        return {
+          employee_id,
+          month: Number(m),
+          year: Number(y),
+          target_travelling_cities: Math.max(existing, count),
+        };
+      });
+
+      const { error: targetSyncError } = await supabase
+        .from("monthly_targets")
+        .upsert(targetUpserts, { onConflict: "employee_id,month,year" });
+
+      if (targetSyncError) {
+        // Non-fatal: tours are already persisted correctly. Surface as a
+        // notice so the operator can re-check the count manually if needed.
+        notices.push(
+          `Tours imported, but failed to sync target_travelling_cities: ${targetSyncError.message}`,
+        );
+      }
     }
 
     revalidatePath("/monthly-data");

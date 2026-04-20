@@ -4,16 +4,18 @@ import { z } from "zod";
  * Per-city tour entry nested inside the monthly data form.
  * Submitted as an array matching the length of target_travelling_cities.
  */
+// Days are NUMERIC(5,2) in the DB (migration 0012) — half-days are valid
+// for both manual entry and bulk import.
 export const cityTourEntrySchema = z.object({
   city_id: z.string().uuid("Please pick a city"),
   target_days: z.coerce
     .number()
-    .int("Must be a whole number")
-    .min(0, "Cannot be negative"),
+    .min(0, "Cannot be negative")
+    .max(31, "Cannot exceed 31 days"),
   actual_days: z.coerce
     .number()
-    .int("Must be a whole number")
-    .min(0, "Cannot be negative"),
+    .min(0, "Cannot be negative")
+    .max(31, "Cannot exceed 31 days"),
 });
 
 export type CityTourEntryInput = z.infer<typeof cityTourEntrySchema>;
