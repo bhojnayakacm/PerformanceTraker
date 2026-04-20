@@ -194,13 +194,9 @@ export async function importActuals(
         return;
       }
 
-      // Mirror manual entry: total_costing = salary + tada + incentive.
-      // sales_promotion is tracked separately and intentionally excluded.
-      const salary = row.salary ?? 0;
-      const tada = row.tada ?? 0;
-      const incentive = row.incentive ?? 0;
-      const salesPromotion = row.sales_promotion ?? 0;
-
+      // total_costing is a GENERATED column in Postgres (salary + tada + incentive);
+      // including it in the payload throws `cannot insert a non-DEFAULT value`.
+      // sales_promotion is tracked separately and intentionally excluded from the sum.
       validRows.push({
         employee_id: employeeId,
         month: row.month,
@@ -212,11 +208,10 @@ export async function importActuals(
         actual_tile: row.actual_tile,
         actual_retail: row.actual_retail,
         actual_return: row.actual_return,
-        salary,
-        tada,
-        incentive,
-        sales_promotion: salesPromotion,
-        total_costing: salary + tada + incentive,
+        salary: row.salary,
+        tada: row.tada,
+        incentive: row.incentive,
+        sales_promotion: row.sales_promotion,
       });
     });
 
