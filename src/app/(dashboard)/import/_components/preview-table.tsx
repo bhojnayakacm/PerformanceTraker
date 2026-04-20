@@ -18,9 +18,9 @@ type Props = {
 
 export function PreviewTable({ rows, headers }: Props) {
   return (
-    <div className="rounded-lg border overflow-x-auto max-h-[400px] overflow-y-auto">
+    <div className="w-full min-w-0 rounded-lg border overflow-x-auto max-h-[400px] overflow-y-auto">
       <Table>
-        <TableHeader className="sticky top-0 bg-background z-10">
+        <TableHeader className="sticky top-0 bg-background z-10 shadow-[0_1px_0_0_var(--border)]">
           <TableRow>
             <TableHead className="w-[50px]">#</TableHead>
             <TableHead className="w-[80px]">Status</TableHead>
