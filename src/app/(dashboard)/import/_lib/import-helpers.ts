@@ -172,16 +172,16 @@ function parseExcel(file: File): Promise<ParsedData> {
         const sheet = wb.Sheets[wb.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
           defval: "",
-          raw: false,
+          raw: true,
         });
 
-        // Normalize headers to lowercase with underscores
+        // Normalize headers to lowercase with underscores; stringify cells
+        // with TZ-safe Date handling.
         const normalized = json.map((row) => {
           const newRow: Record<string, string> = {};
           for (const [key, val] of Object.entries(row)) {
-            newRow[key.trim().toLowerCase().replace(/\s+/g, "_")] = String(
-              val ?? ""
-            );
+            newRow[key.trim().toLowerCase().replace(/\s+/g, "_")] =
+              stringifyCell(val);
           }
           return newRow;
         });
@@ -197,6 +197,20 @@ function parseExcel(file: File): Promise<ParsedData> {
     reader.readAsArrayBuffer(file);
   });
 }
+
+// xlsx with cellDates:true + raw:true surfaces date cells as JS Date objects
+// anchored at UTC midnight of the day the user typed. Use UTC getters to
+// recover that exact Y/M/D — local getters would shift it by the operator's
+// timezone offset (e.g., IST +05:30 → one day backward).
+function stringifyCell(val: unknown): string {
+  if (val == null) return "";
+  if (val instanceof Date) {
+    return `${val.getUTCFullYear()}-${pad2(val.getUTCMonth() + 1)}-${pad2(val.getUTCDate())}`;
+  }
+  return String(val);
+}
+
+const pad2 = (n: number) => String(n).padStart(2, "0");
 
 // ── Schemas ──
 
@@ -216,23 +230,74 @@ const monthYear = {
 // Coerces strings → 0 when blank, accepts whole-number metrics ≥ 0.
 const metric = z.coerce.number().min(0).default(0);
 
-// Accepts YYYY-MM-DD directly, or any value parseable by `new Date(...)`
-// (handles Excel dates that XLSX surfaces as ISO timestamps with cellDates).
+// Date parsing — string-arithmetic only, never `new Date()`.
+//
+// Why: `new Date("4/19/2026")` produces local-midnight, so `.toISOString()`
+// in IST (+05:30) returns "2026-04-18T..." — the classic off-by-one.
+// We parse by splitting on separators and re-assembling YYYY-MM-DD, so the
+// day the user typed is the day the DB stores.
+//
+// Accepts: ISO (YYYY-MM-DD), DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY (Indian/EU).
+// Excel-native Date objects are pre-converted to ISO in `stringifyCell` above.
 const dateField = z.preprocess(
-  (val) => {
-    if (val == null || val === "") return val;
-    const str = String(val).trim();
-    if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
-    const parsed = new Date(str);
-    if (!Number.isNaN(parsed.getTime())) {
-      return parsed.toISOString().slice(0, 10);
-    }
-    return str;
-  },
+  (val) => normalizeDateInput(val),
   z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in YYYY-MM-DD format"),
 );
+
+function normalizeDateInput(val: unknown): unknown {
+  if (val == null || val === "") return val;
+  const s = String(val).trim();
+
+  // Primary: ISO YYYY-MM-DD — preserve exactly.
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) {
+    const [, y, m, d] = iso;
+    return isValidYMD(+y, +m, +d) ? s : s;
+  }
+
+  // Fallback: DD[/.-]MM[/.-]YYYY (Indian/European).
+  // MM/DD/YYYY is ambiguous with DD/MM/YYYY and intentionally unsupported —
+  // users should save Excel files with YYYY-MM-DD cells if their locale is US.
+  const dmy = s.match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})$/);
+  if (dmy) {
+    const [, d, m, y] = dmy;
+    const dn = +d;
+    const mn = +m;
+    const yn = +y;
+    if (isValidYMD(yn, mn, dn)) {
+      return `${yn}-${pad2(mn)}-${pad2(dn)}`;
+    }
+  }
+
+  return s;
+}
+
+function isValidYMD(y: number, m: number, d: number): boolean {
+  if (y < 2000 || y > 2100) return false;
+  if (m < 1 || m > 12) return false;
+  if (d < 1 || d > 31) return false;
+  const daysInMonth = [
+    31,
+    isLeap(y) ? 29 : 28,
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31,
+  ];
+  return d <= daysInMonth[m - 1];
+}
+
+function isLeap(y: number): boolean {
+  return (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+}
 
 const employeeRowSchema = z.object({
   emp_id: z.string().trim().min(1, "Emp ID is required"),
