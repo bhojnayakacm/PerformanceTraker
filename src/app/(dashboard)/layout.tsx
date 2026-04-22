@@ -31,9 +31,9 @@ export default async function DashboardLayout({
   return (
     <SidebarProvider className="h-svh overflow-hidden">
       <AppSidebar />
-      <SidebarInset className="min-w-0 min-h-0 overflow-hidden">
+      <SidebarInset className="min-w-0 min-h-0 overflow-hidden bg-slate-50">
         <AppHeader userName={userName} userRole={userRole} />
-        <main className="flex-1 min-h-0 min-w-0 overflow-y-auto p-6">
+        <main className="flex-1 min-h-0 min-w-0 overflow-y-auto bg-slate-50 p-6">
           {children}
         </main>
       </SidebarInset>

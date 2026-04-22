@@ -36,19 +36,21 @@ export function AppHeader({
       .slice(0, 2) || "U";
 
   return (
-    <header className="flex h-14 shrink-0 items-center gap-2 border-b bg-card px-4">
-      <SidebarTrigger className="-ml-1" />
-      <Separator orientation="vertical" className="mr-2 !h-4" />
+    <header className="flex h-14 shrink-0 items-center gap-2 border-b border-slate-200 bg-white/80 px-4 backdrop-blur-md supports-[backdrop-filter]:bg-white/70">
+      <SidebarTrigger className="-ml-1 text-slate-600 hover:text-slate-900" />
+      <Separator orientation="vertical" className="mr-2 !h-4 bg-slate-200" />
       <div className="flex-1" />
       <div className="flex items-center gap-3">
         <div className="hidden sm:block text-right">
-          <p className="text-sm font-medium leading-none">{userName}</p>
-          <p className="text-xs text-muted-foreground capitalize">
+          <p className="text-sm font-semibold leading-none text-slate-800">
+            {userName}
+          </p>
+          <p className="mt-0.5 text-xs text-slate-500 capitalize">
             {userRole.replace("_", " ")}
           </p>
         </div>
         <div
-          className="flex size-8 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-semibold"
+          className="flex size-9 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-semibold ring-1 ring-primary/15"
           aria-hidden="true"
         >
           {initials}
@@ -56,7 +58,7 @@ export function AppHeader({
         <Button
           variant="ghost"
           size="icon"
-          className="h-8 w-8"
+          className="h-9 w-9 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900"
           onClick={handleLogout}
           disabled={isLoggingOut}
         >

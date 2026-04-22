@@ -415,7 +415,7 @@ export function DailyLogView({
   return (
     <div className="flex h-full min-h-0 flex-col gap-4">
       {/* ── Toolbar ── */}
-      <div className="shrink-0 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/60 bg-card p-3 transition-shadow duration-300 hover:shadow-md">
+      <div className="shrink-0 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-[0_1px_2px_0_rgba(15,23,42,0.04)] transition-all duration-200 hover:shadow-[0_4px_16px_-6px_rgba(79,70,229,0.15)]">
         <div className="relative flex-1 max-w-sm min-w-[200px]">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -527,7 +527,7 @@ export function DailyLogView({
 
       {/* ── Data Grid ── */}
       <Card
-        className={`flex-1 min-h-0 flex flex-col border-0 py-0 gap-0 shadow-sm ring-1 ring-border/50 overflow-hidden transition-shadow duration-300 hover:shadow-md ${isNavigating ? "opacity-50 pointer-events-none" : ""}`}
+        className={`flex-1 min-h-0 flex flex-col border-0 py-0 gap-0 rounded-2xl bg-white ring-1 ring-slate-200 shadow-[0_4px_24px_-12px_rgba(79,70,229,0.12)] overflow-hidden transition-all duration-200 hover:shadow-[0_6px_28px_-10px_rgba(79,70,229,0.18)] ${isNavigating ? "opacity-50 pointer-events-none" : ""}`}
       >
         <CardContent className="flex-1 min-h-0 flex flex-col p-0">
           <div className="flex-1 min-h-0 overflow-auto">
