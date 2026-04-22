@@ -29,11 +29,13 @@ export default async function DashboardLayout({
   const userRole = profile?.role ?? "viewer";
 
   return (
-    <SidebarProvider>
+    <SidebarProvider className="h-svh overflow-hidden">
       <AppSidebar />
-      <SidebarInset className="min-w-0">
+      <SidebarInset className="min-w-0 min-h-0 overflow-hidden">
         <AppHeader userName={userName} userRole={userRole} />
-        <main className="flex-1 p-6 min-w-0">{children}</main>
+        <main className="flex-1 min-h-0 min-w-0 overflow-y-auto p-6">
+          {children}
+        </main>
       </SidebarInset>
     </SidebarProvider>
   );

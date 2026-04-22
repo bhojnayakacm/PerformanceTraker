@@ -413,9 +413,9 @@ export function DailyLogView({
   const [dateYear, dateMonth] = date.split("-").map(Number);
 
   return (
-    <div className="space-y-4">
+    <div className="flex h-full min-h-0 flex-col gap-4">
       {/* ── Toolbar ── */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/60 bg-card p-3 transition-shadow duration-300 hover:shadow-md">
+      <div className="shrink-0 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/60 bg-card p-3 transition-shadow duration-300 hover:shadow-md">
         <div className="relative flex-1 max-w-sm min-w-[200px]">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -527,10 +527,10 @@ export function DailyLogView({
 
       {/* ── Data Grid ── */}
       <Card
-        className={`border-0 py-0 gap-0 shadow-sm ring-1 ring-border/50 overflow-hidden transition-shadow duration-300 hover:shadow-md ${isNavigating ? "opacity-50 pointer-events-none" : ""}`}
+        className={`flex-1 min-h-0 flex flex-col border-0 py-0 gap-0 shadow-sm ring-1 ring-border/50 overflow-hidden transition-shadow duration-300 hover:shadow-md ${isNavigating ? "opacity-50 pointer-events-none" : ""}`}
       >
-        <CardContent className="p-0">
-          <div className="overflow-auto max-h-[calc(100vh-16rem)]">
+        <CardContent className="flex-1 min-h-0 flex flex-col p-0">
+          <div className="flex-1 min-h-0 overflow-auto">
             <table
               className="w-full border-collapse text-sm"
               style={{ tableLayout: "fixed", minWidth: tableMinWidth }}
@@ -655,33 +655,6 @@ export function DailyLogView({
           </div>
         </CardContent>
       </Card>
-
-      {/* ── Legend ── */}
-      {canEdit && (
-        <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-          <div className="flex items-center gap-1.5">
-            <div className="h-3 w-3 rounded-sm bg-amber-100 border border-amber-300 dark:bg-amber-950/40 dark:border-amber-800" />
-            <span>Unsaved changes</span>
-          </div>
-          <span>&middot;</span>
-          <span>
-            Target columns (super admin &amp; manager) &middot; Actual columns
-          </span>
-          <span>&middot;</span>
-          <div className="flex items-center gap-1.5">
-            <div className="h-3 w-3 rounded-sm bg-emerald-100 border border-emerald-500" />
-            <span>&ge;90%</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <div className="h-3 w-3 rounded-sm bg-yellow-100 border border-yellow-400" />
-            <span>70&ndash;89%</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <div className="h-3 w-3 rounded-sm bg-red-100 border border-red-500" />
-            <span>&lt;70%</span>
-          </div>
-        </div>
-      )}
 
       {/* ── Bulk Targets Dialog ── */}
       <BulkTargetsDialog

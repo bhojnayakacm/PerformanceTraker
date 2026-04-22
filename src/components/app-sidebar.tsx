@@ -42,7 +42,7 @@ export function AppSidebar() {
 
   return (
     <Sidebar collapsible="icon">
-      <SidebarHeader className="border-b border-sidebar-border">
+      <SidebarHeader className="h-14 justify-center border-b border-border px-2 py-1">
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton
