@@ -27,8 +27,8 @@ export default async function UsersPage() {
 
   if (profile?.role !== "super_admin") {
     return (
-      <div className="space-y-6">
-        <div>
+      <div className="flex h-full min-h-0 flex-col gap-4">
+        <div className="shrink-0">
           <h1 className="text-2xl font-bold tracking-tight">
             User Management
           </h1>
@@ -36,7 +36,7 @@ export default async function UsersPage() {
             Manage application users and their roles.
           </p>
         </div>
-        <div className="rounded-lg border p-8 text-center text-muted-foreground">
+        <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-muted-foreground shadow-[0_1px_2px_0_rgba(15,23,42,0.04)]">
           <p>Only Super Admins can manage users.</p>
         </div>
       </div>
@@ -44,18 +44,20 @@ export default async function UsersPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div>
+    <div className="flex h-full min-h-0 flex-col gap-4">
+      <div className="shrink-0">
         <h1 className="text-2xl font-bold tracking-tight">User Management</h1>
         <p className="text-muted-foreground mt-1">
           Manage application users and their roles.
         </p>
       </div>
-      <UsersDataTable
-        data={profiles ?? []}
-        currentUserId={user.id}
-        employees={employees ?? []}
-      />
+      <div className="flex min-h-0 flex-1 flex-col">
+        <UsersDataTable
+          data={profiles ?? []}
+          currentUserId={user.id}
+          employees={employees ?? []}
+        />
+      </div>
     </div>
   );
 }

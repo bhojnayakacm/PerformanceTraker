@@ -23,14 +23,16 @@ export default async function EmployeesPage() {
   const employees = await getEmployeesForUser(supabase, user.id, userRole);
 
   return (
-    <div className="space-y-6">
-      <div>
+    <div className="flex h-full min-h-0 flex-col gap-4">
+      <div className="shrink-0">
         <h1 className="text-2xl font-bold tracking-tight">Employees</h1>
         <p className="text-muted-foreground mt-1">
           Manage employee records and details.
         </p>
       </div>
-      <EmployeeDataTable data={employees} userRole={userRole} />
+      <div className="flex min-h-0 flex-1 flex-col">
+        <EmployeeDataTable data={employees} userRole={userRole} />
+      </div>
     </div>
   );
 }

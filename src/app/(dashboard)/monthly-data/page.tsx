@@ -18,8 +18,8 @@ export default async function MonthlyDataPage({
   const query = params.query?.trim() ?? "";
 
   return (
-    <div className="space-y-6">
-      <div>
+    <div className="flex h-full min-h-0 flex-col gap-4">
+      <div className="shrink-0">
         <h1 className="text-2xl font-bold tracking-tight">Monthly Data</h1>
         <p className="text-muted-foreground mt-1">
           Track monthly targets and actuals for all employees.
@@ -28,12 +28,14 @@ export default async function MonthlyDataPage({
 
       {/* Suspense key on month+year so period changes show skeleton.
           Search changes use startTransition (old UI stays visible). */}
-      <Suspense
-        key={`${month}-${year}`}
-        fallback={<MonthlyDataTableSkeleton />}
-      >
-        <MonthlyDataContent month={month} year={year} query={query} />
-      </Suspense>
+      <div className="flex min-h-0 flex-1 flex-col">
+        <Suspense
+          key={`${month}-${year}`}
+          fallback={<MonthlyDataTableSkeleton />}
+        >
+          <MonthlyDataContent month={month} year={year} query={query} />
+        </Suspense>
+      </div>
     </div>
   );
 }
