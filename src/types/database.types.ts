@@ -224,6 +224,8 @@ export type Database = {
       monthly_targets: {
         Row: {
           created_at: string
+          daily_target_calls: number
+          daily_target_total_meetings: number
           employee_id: string
           id: string
           month: number
@@ -233,10 +235,13 @@ export type Database = {
           target_total_meetings: number
           target_travelling_cities: number
           updated_at: string
+          working_weekdays: number[]
           year: number
         }
         Insert: {
           created_at?: string
+          daily_target_calls?: number
+          daily_target_total_meetings?: number
           employee_id: string
           id?: string
           month: number
@@ -246,10 +251,13 @@ export type Database = {
           target_total_meetings?: number
           target_travelling_cities?: number
           updated_at?: string
+          working_weekdays?: number[]
           year: number
         }
         Update: {
           created_at?: string
+          daily_target_calls?: number
+          daily_target_total_meetings?: number
           employee_id?: string
           id?: string
           month?: number
@@ -259,6 +267,7 @@ export type Database = {
           target_total_meetings?: number
           target_travelling_cities?: number
           updated_at?: string
+          working_weekdays?: number[]
           year?: number
         }
         Relationships: [

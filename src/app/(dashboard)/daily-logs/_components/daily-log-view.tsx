@@ -116,13 +116,25 @@ const TIER_CLASSES = {
   none: { bg: "", text: "" },
 } as const;
 
+/**
+ * Color tier for a (target, actual) pair on a specific day.
+ *
+ * Sparse-data rule: on a past or today date where a target is set but
+ * the actual is 0 / null / unlogged, performance is mathematically 0% —
+ * so the cell must render in the danger tier. Future days are never
+ * colored regardless of values, so we don't red-shame days that haven't
+ * happened yet.
+ */
 function getAchievementColors(
   target: number,
-  actual: number
+  actual: number,
+  isPastOrToday: boolean
 ): { bg: string; text: string } {
+  if (!isPastOrToday) return TIER_CLASSES.none;
   const t = Number(target) || 0;
+  if (t <= 0) return TIER_CLASSES.none; // no target → no comparison
   const a = Number(actual) || 0;
-  if (t <= 0 || a <= 0) return TIER_CLASSES.none;
+  if (a <= 0) return TIER_CLASSES.danger; // target set, nothing logged → 0%
   const ratio = a / t;
   if (ratio >= 0.9) return TIER_CLASSES.success;
   if (ratio >= 0.7) return TIER_CLASSES.warning;
@@ -421,6 +433,9 @@ export function DailyLogView({
   };
 
   const today = toLocalDateString(new Date());
+  // ISO YYYY-MM-DD strings are lexically orderable, so plain <=
+  // is a safe "same day or earlier" check without Date objects.
+  const isPastOrToday = date <= today;
   const isBusy = isSaving || isNavigating;
 
   // Extract month/year for the bulk targets dialog defaults
@@ -637,6 +652,7 @@ export function DailyLogView({
                     isDirty={dirty.has(emp.id)}
                     canEditTargets={canEditTargets}
                     canEdit={canEdit}
+                    isPastOrToday={isPastOrToday}
                     onChange={handleChange}
                     onRemarkChange={handleRemarkChange}
                   />
@@ -693,6 +709,7 @@ function EmployeeRow({
   isDirty,
   canEditTargets,
   canEdit,
+  isPastOrToday,
   onChange,
   onRemarkChange,
 }: {
@@ -701,13 +718,15 @@ function EmployeeRow({
   isDirty: boolean;
   canEditTargets: boolean;
   canEdit: boolean;
+  isPastOrToday: boolean;
   onChange: (empId: string, field: MetricFields, value: string) => void;
   onRemarkChange: (empId: string, value: string) => void;
 }) {
   // Calls achievement
   const callsColors = getAchievementColors(
     values.target_calls,
-    values.actual_calls
+    values.actual_calls,
+    isPastOrToday
   );
 
   // Meetings achievement (combined: sum of 3 actuals vs single target)
@@ -717,7 +736,8 @@ function EmployeeRow({
     values.actual_site_visits;
   const meetingsColors = getAchievementColors(
     values.target_total_meetings,
-    meetingsTotal
+    meetingsTotal,
+    isPastOrToday
   );
 
   return (

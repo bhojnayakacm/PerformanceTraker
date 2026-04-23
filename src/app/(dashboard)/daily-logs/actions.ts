@@ -211,6 +211,31 @@ export async function bulkSetMonthlyTargets(
       return { error: "No working days selected" };
     }
 
+    // Persist the *designated plan* on monthly_targets before writing any
+    // daily rows. This is what the MTD calculator falls back to when an
+    // elapsed working day has no daily_metrics row — without it, a sparsely-
+    // logged month silently under-counts the cumulative target.
+    //
+    // The payload only carries the plan columns: target_total_calls /
+    // target_total_meetings are rollup outputs owned by the
+    // _sync_monthly_from_daily trigger, so we deliberately omit them and
+    // let the trigger rewrite them once the daily_metrics upsert below
+    // fires. Existing rollup values on pre-existing rows are preserved.
+    const planRows = employeeIds.map((empId) => ({
+      employee_id: empId,
+      month,
+      year,
+      daily_target_calls: target_calls,
+      daily_target_total_meetings: target_total_meetings,
+      working_weekdays: included_weekdays,
+    }));
+    {
+      const { error: planError } = await supabase
+        .from("monthly_targets")
+        .upsert(planRows, { onConflict: "employee_id,month,year" });
+      if (planError) return { error: planError.message };
+    }
+
     // Build upsert rows (only target columns — existing actuals are preserved)
     const rows = employeeIds.flatMap((empId) =>
       dates.map((date) => ({
