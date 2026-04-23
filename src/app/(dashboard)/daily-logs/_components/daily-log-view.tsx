@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useEffect, useTransition, useCallback, useMemo, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
+import { useDebouncedSearch } from "@/hooks/use-debounced-search";
 import {
   ChevronLeft,
   ChevronRight,
@@ -243,6 +244,7 @@ export function DailyLogView({
   userRole,
 }: Props) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [isSaving, startSaveTransition] = useTransition();
   const [isNavigating, startNavigation] = useTransition();
   const canEditTargets = userRole === "super_admin" || userRole === "manager";
@@ -276,7 +278,10 @@ export function DailyLogView({
   }, []);
 
   const [calendarOpen, setCalendarOpen] = useState(false);
-  const [searchFilter, setSearchFilter] = useState("");
+  // URL-backed search so the filter survives the key={date} remount
+  // that happens whenever the user navigates to a different day.
+  const { inputValue: searchFilter, setInputValue: setSearchFilter } =
+    useDebouncedSearch("query", 300);
   const [bulkDialogOpen, setBulkDialogOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -370,11 +375,20 @@ export function DailyLogView({
       if (dirty.size > 0 && !confirm("You have unsaved changes. Discard?")) {
         return;
       }
+      // Merge with existing URL params so other filters (e.g. ?query=)
+      // aren't wiped. Also flush the current input value in case the
+      // debounce hasn't yet committed — the key={date} remount would
+      // otherwise re-initialize the search input from a stale URL.
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("date", newDate);
+      const trimmed = searchFilter.trim();
+      if (trimmed) params.set("query", trimmed);
+      else params.delete("query");
       startNavigation(() => {
-        router.push(`/daily-logs?date=${newDate}`);
+        router.push(`/daily-logs?${params.toString()}`);
       });
     },
-    [dirty, router, startNavigation]
+    [dirty, router, startNavigation, searchParams, searchFilter]
   );
 
   const handleSave = () => {

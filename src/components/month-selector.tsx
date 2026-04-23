@@ -29,9 +29,23 @@ type Props = {
   month: number;
   year: number;
   basePath: string;
+  /**
+   * Optional extras to merge into the URL at navigation time.
+   * Callers use this to inject client-held values (e.g. a pending
+   * debounced search) that may not yet be in the URL when the user
+   * clicks a month control — prevents filter loss when a sibling
+   * Suspense boundary remounts on month/year change.
+   * Key with empty-string value means "delete this param".
+   */
+  getExtraParams?: () => Record<string, string>;
 };
 
-export function MonthSelector({ month, year, basePath }: Props) {
+export function MonthSelector({
+  month,
+  year,
+  basePath,
+  getExtraParams,
+}: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -39,6 +53,13 @@ export function MonthSelector({ month, year, basePath }: Props) {
     const params = new URLSearchParams(searchParams.toString());
     params.set("month", String(m));
     params.set("year", String(y));
+    const extras = getExtraParams?.();
+    if (extras) {
+      for (const [k, v] of Object.entries(extras)) {
+        if (v) params.set(k, v);
+        else params.delete(k);
+      }
+    }
     router.push(`${basePath}?${params.toString()}`);
   };
 

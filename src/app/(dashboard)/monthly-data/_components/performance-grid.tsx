@@ -91,7 +91,12 @@ export function PerformanceGrid({
               Manage Cities
             </Button>
           )}
-          <MonthSelector month={month} year={year} basePath="/monthly-data" />
+          <MonthSelector
+            month={month}
+            year={year}
+            basePath="/monthly-data"
+            getExtraParams={() => ({ query: inputValue.trim() })}
+          />
         </div>
       </div>
 
