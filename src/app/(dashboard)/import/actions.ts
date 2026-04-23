@@ -237,19 +237,22 @@ export async function importActuals(
 }
 
 /* ─────────────────────────────────────────────────────────────
-   Daily Logs — feeds the daily_metrics table.
-   The `trg_sync_daily_to_monthly` trigger automatically rolls these
-   up into monthly_targets/monthly_actuals on every upsert, so users
-   can explicitly skip non-working days by simply omitting them
-   from the CSV.
+   Daily Logs — ACTUALS ONLY.
+   Feeds the daily_metrics table; `trg_sync_daily_to_monthly` rolls
+   these up into monthly_actuals on every upsert. Users skip
+   non-working days by omitting them from the CSV.
+
+   Targets (target_calls / target_total_meetings) are intentionally
+   NOT in this payload — they are set via the dedicated "Set Target"
+   UI on the Daily Logs page. Omitting the keys from the upsert
+   means Postgres preserves any existing target on conflict, so a
+   bulk actuals import can never clobber a manager-set goal.
 ───────────────────────────────────────────────────────────── */
 
 export async function importDailyLogs(
   rows: {
     name: string;
     date: string;
-    target_calls: number;
-    target_total_meetings: number;
     actual_calls: number;
     actual_architect_meetings: number;
     actual_client_meetings: number;
@@ -280,8 +283,6 @@ export async function importDailyLogs(
       validRows.push({
         employee_id: employeeId,
         date: row.date,
-        target_calls: row.target_calls,
-        target_total_meetings: row.target_total_meetings,
         actual_calls: row.actual_calls,
         actual_architect_meetings: row.actual_architect_meetings,
         actual_client_meetings: row.actual_client_meetings,

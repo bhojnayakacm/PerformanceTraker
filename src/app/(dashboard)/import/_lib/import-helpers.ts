@@ -87,12 +87,13 @@ const TEMPLATES: Record<ImportType, { headers: string[]; rows: string[][] }> = {
       ],
     ],
   },
+  // Daily Logs CSV carries ACTUALS ONLY — target_calls / target_total_meetings
+  // are set via the dedicated "Set Target" UI and must never be overwritten
+  // by a bulk upload.
   daily_logs: {
     headers: [
       "name",
       "date",
-      "target_calls",
-      "target_total_meetings",
       "actual_calls",
       "actual_architect_meetings",
       "actual_client_meetings",
@@ -100,9 +101,9 @@ const TEMPLATES: Record<ImportType, { headers: string[]; rows: string[][] }> = {
       "remarks",
     ],
     rows: [
-      ["John Doe", "2026-03-02", "5", "3", "5", "1", "1", "1", ""],
-      ["John Doe", "2026-03-03", "5", "3", "0", "0", "0", "0", "Public holiday"],
-      ["John Doe", "2026-03-04", "5", "3", "6", "2", "0", "1", ""],
+      ["John Doe", "2026-03-02", "5", "1", "1", "1", ""],
+      ["John Doe", "2026-03-03", "0", "0", "0", "0", "Public holiday"],
+      ["John Doe", "2026-03-04", "6", "2", "0", "1", ""],
     ],
   },
   city_tours: {
@@ -340,12 +341,12 @@ const actualRowSchema = z.object({
   sales_promotion: metric,
 });
 
-// Daily grain — feeds the trigger that rolls up to monthly_actuals/targets.
+// Daily grain — feeds the trigger that rolls up actuals to monthly_actuals.
+// Targets (target_calls / target_total_meetings) are owned by the "Set Target"
+// UI in the Daily Logs page and intentionally absent from this schema.
 const dailyLogRowSchema = z.object({
   name: employeeNameField,
   date: dateField,
-  target_calls: metric,
-  target_total_meetings: metric,
   actual_calls: metric,
   actual_architect_meetings: metric,
   actual_client_meetings: metric,

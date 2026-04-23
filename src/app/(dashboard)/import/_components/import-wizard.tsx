@@ -63,7 +63,7 @@ type ModuleConfig = {
   label: string;
   description: string;
   Icon: typeof Users;
-  hint: string;
+  instructions: string[];
   category: ModuleCategory;
   columns: { name: string; required: boolean }[];
 };
@@ -84,7 +84,11 @@ const MODULES: ModuleConfig[] = [
     description: "Bulk create or update employee records",
     Icon: Users,
     category: "master",
-    hint: "Matched by emp_id — existing employees are updated, new ones inserted.",
+    instructions: [
+      "Matched by emp_id — existing employees are updated in place.",
+      "New emp_ids are inserted as fresh employee records.",
+      "location and state are optional — leave blank if unknown.",
+    ],
     columns: [
       { name: "emp_id", required: true },
       { name: "name", required: true },
@@ -98,7 +102,12 @@ const MODULES: ModuleConfig[] = [
     description: "Macro targets only — no daily metrics",
     Icon: Target,
     category: "monthly",
-    hint: "Matched by employee name + month + year. Names must exactly match an existing employee. Daily-level targets (calls, meetings) are auto-synced from Daily Logs and must NOT appear here.",
+    instructions: [
+      "Matched by employee name + month + year.",
+      "Names must exactly match an existing employee in the system.",
+      "Daily-level targets (calls, meetings) are auto-synced from Daily Logs — do NOT include them here.",
+      "Travelling-city targets are managed by the City Tours module, not this CSV.",
+    ],
     columns: [
       { name: "name", required: true },
       { name: "month", required: true },
@@ -113,7 +122,13 @@ const MODULES: ModuleConfig[] = [
     description: "Sales, costing & financial actuals",
     Icon: BarChart3,
     category: "monthly",
-    hint: "Matched by employee name + month + year. Names must exactly match an existing employee. Daily metrics roll up automatically; actual_net_sale and actual_dispatched_sqft are generated columns; total_costing is auto-computed as salary + tada + incentive (sales_promotion excluded).",
+    instructions: [
+      "Matched by employee name + month + year.",
+      "Names must exactly match an existing employee in the system.",
+      "Daily metrics (calls, meetings, site visits) roll up automatically from Daily Logs.",
+      "actual_net_sale and actual_dispatched_sqft are GENERATED columns — never include them.",
+      "total_costing is auto-computed as salary + tada + incentive (sales_promotion is tracked but excluded from the sum).",
+    ],
     columns: [
       { name: "name", required: true },
       { name: "month", required: true },
@@ -134,15 +149,19 @@ const MODULES: ModuleConfig[] = [
   {
     value: "daily_logs",
     label: "Daily Logs",
-    description: "Per-day calls, meetings & site visits",
+    description: "Per-day actual calls, meetings & site visits",
     Icon: CalendarDays,
     category: "daily",
-    hint: "Matched by employee name + date. Names must exactly match an existing employee. Skip non-working days by omitting them from the CSV. Monthly totals are auto-calculated by the rollup trigger.",
+    instructions: [
+      "Matched by employee name + date.",
+      "Names must exactly match an existing employee in the system.",
+      "Skip non-working days by completely omitting them from the CSV.",
+      "Targets are managed via the 'Set Target' UI on the Daily Logs page — this import covers actuals only.",
+      "Monthly totals are auto-calculated by the database rollup trigger.",
+    ],
     columns: [
       { name: "name", required: true },
       { name: "date", required: true },
-      { name: "target_calls", required: true },
-      { name: "target_total_meetings", required: true },
       { name: "actual_calls", required: true },
       { name: "actual_architect_meetings", required: true },
       { name: "actual_client_meetings", required: true },
@@ -156,7 +175,12 @@ const MODULES: ModuleConfig[] = [
     description: "Per-city target & actual travel days",
     Icon: MapPin,
     category: "daily",
-    hint: "Matched by employee name + month + year + city. Names must exactly match an existing employee. Unknown cities are auto-created and surfaced in the result panel.",
+    instructions: [
+      "Matched by employee name + month + year + city.",
+      "Names must exactly match an existing employee in the system.",
+      "Unknown cities are auto-created and surfaced in the result panel as notices.",
+      "Days accept decimals — use 0.5 to log a half-day visit.",
+    ],
     columns: [
       { name: "name", required: true },
       { name: "month", required: true },
@@ -347,7 +371,7 @@ export function ImportWizard() {
                 <CardTitle className="text-base">
                   Import {activeModule.label}
                 </CardTitle>
-                <CardDescription>{activeModule.hint}</CardDescription>
+                <CardDescription>{activeModule.description}</CardDescription>
               </div>
               <Button
                 variant="outline"
@@ -361,6 +385,19 @@ export function ImportWizard() {
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
+            {/* Instructions */}
+            <div className="rounded-lg border border-slate-200 bg-white p-3">
+              <p className="text-xs font-medium text-slate-500 mb-1 flex items-center gap-1.5">
+                <Info className="h-3.5 w-3.5" />
+                Before You Import
+              </p>
+              <ul className="list-disc space-y-1.5 ml-5 mt-2 text-sm text-slate-600 marker:text-slate-400">
+                {activeModule.instructions.map((item, i) => (
+                  <li key={i}>{item}</li>
+                ))}
+              </ul>
+            </div>
+
             {/* Expected columns */}
             <div className="rounded-lg bg-muted/50 p-3">
               <p className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1.5">
