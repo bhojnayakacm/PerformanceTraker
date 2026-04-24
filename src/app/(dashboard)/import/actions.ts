@@ -34,21 +34,52 @@ async function assertSuperAdmin() {
 }
 
 /* ─────────────────────────────────────────────────────────────
+   Partial-upsert header gate
+───────────────────────────────────────────────────────────────
+   The wizard forwards the exact header row from the uploaded
+   CSV/XLSX. We use it to decide which non-key fields belong in
+   the Supabase payload:
+
+     header present  →  include key (empty cell still clobbers to
+                        its Zod default — 0 for numbers, null for
+                        blank text; that is intentional per spec).
+     header absent   →  omit key entirely (Supabase then leaves
+                        the column untouched on ON CONFLICT UPDATE,
+                        which is what preserves existing data).
+
+   PostgREST's bulk-upsert path expects every object in the array
+   to share the same shape. Since all rows in a single import
+   share the same CSV header row, building payloads with the same
+   `has()` decisions across the loop keeps that invariant trivially.
+───────────────────────────────────────────────────────────── */
+function makeHeaderGate(csvHeaders: string[]) {
+  const set = new Set(
+    (csvHeaders ?? []).map((h) => h.trim().toLowerCase()),
+  );
+  return (field: string) => set.has(field);
+}
+
+/* ─────────────────────────────────────────────────────────────
    Employees
 ───────────────────────────────────────────────────────────── */
 
 export async function importEmployees(
   rows: { emp_id: string; name: string; location?: string; state?: string }[],
+  csvHeaders: string[],
 ): Promise<ImportResult> {
   try {
     const supabase = await assertSuperAdmin();
+    const has = makeHeaderGate(csvHeaders);
 
-    const upsertData = rows.map((row) => ({
-      emp_id: row.emp_id,
-      name: row.name,
-      location: row.location || null,
-      state: row.state || null,
-    }));
+    const upsertData: TablesInsert<"employees">[] = rows.map((row) => {
+      const payload: TablesInsert<"employees"> = {
+        emp_id: row.emp_id,
+        name: row.name,
+      };
+      if (has("location")) payload.location = row.location?.trim() || null;
+      if (has("state")) payload.state = row.state?.trim() || null;
+      return payload;
+    });
 
     const { error } = await supabase
       .from("employees")
@@ -102,9 +133,11 @@ export async function importTargets(
     target_client_visits: number;
     target_dispatched_sqft: number;
   }[],
+  csvHeaders: string[],
 ): Promise<ImportResult> {
   try {
     const supabase = await assertSuperAdmin();
+    const has = makeHeaderGate(csvHeaders);
     const empMap = await resolveEmployeesByName(
       supabase,
       rows.map((r) => r.name),
@@ -121,13 +154,16 @@ export async function importTargets(
         return;
       }
 
-      validRows.push({
+      const payload: TablesInsert<"monthly_targets"> = {
         employee_id: employeeId,
         month: row.month,
         year: row.year,
-        target_client_visits: row.target_client_visits,
-        target_dispatched_sqft: row.target_dispatched_sqft,
-      });
+      };
+      if (has("target_client_visits"))
+        payload.target_client_visits = row.target_client_visits;
+      if (has("target_dispatched_sqft"))
+        payload.target_dispatched_sqft = row.target_dispatched_sqft;
+      validRows.push(payload);
     });
 
     if (validRows.length > 0) {
@@ -175,9 +211,11 @@ export async function importActuals(
     incentive: number;
     sales_promotion: number;
   }[],
+  csvHeaders: string[],
 ): Promise<ImportResult> {
   try {
     const supabase = await assertSuperAdmin();
+    const has = makeHeaderGate(csvHeaders);
     const empMap = await resolveEmployeesByName(
       supabase,
       rows.map((r) => r.name),
@@ -197,22 +235,27 @@ export async function importActuals(
       // total_costing is a GENERATED column in Postgres (salary + tada + incentive);
       // including it in the payload throws `cannot insert a non-DEFAULT value`.
       // sales_promotion is tracked separately and intentionally excluded from the sum.
-      validRows.push({
+      const payload: TablesInsert<"monthly_actuals"> = {
         employee_id: employeeId,
         month: row.month,
         year: row.year,
-        actual_client_visits: row.actual_client_visits,
-        actual_conversions: row.actual_conversions,
-        actual_project: row.actual_project,
-        actual_project_2: row.actual_project_2,
-        actual_tile: row.actual_tile,
-        actual_retail: row.actual_retail,
-        actual_return: row.actual_return,
-        salary: row.salary,
-        tada: row.tada,
-        incentive: row.incentive,
-        sales_promotion: row.sales_promotion,
-      });
+      };
+      if (has("actual_client_visits"))
+        payload.actual_client_visits = row.actual_client_visits;
+      if (has("actual_conversions"))
+        payload.actual_conversions = row.actual_conversions;
+      if (has("actual_project")) payload.actual_project = row.actual_project;
+      if (has("actual_project_2"))
+        payload.actual_project_2 = row.actual_project_2;
+      if (has("actual_tile")) payload.actual_tile = row.actual_tile;
+      if (has("actual_retail")) payload.actual_retail = row.actual_retail;
+      if (has("actual_return")) payload.actual_return = row.actual_return;
+      if (has("salary")) payload.salary = row.salary;
+      if (has("tada")) payload.tada = row.tada;
+      if (has("incentive")) payload.incentive = row.incentive;
+      if (has("sales_promotion"))
+        payload.sales_promotion = row.sales_promotion;
+      validRows.push(payload);
     });
 
     if (validRows.length > 0) {
@@ -259,9 +302,11 @@ export async function importDailyLogs(
     actual_site_visits: number;
     remarks?: string;
   }[],
+  csvHeaders: string[],
 ): Promise<ImportResult> {
   try {
     const supabase = await assertSuperAdmin();
+    const has = makeHeaderGate(csvHeaders);
     const empMap = await resolveEmployeesByName(
       supabase,
       rows.map((r) => r.name),
@@ -280,15 +325,21 @@ export async function importDailyLogs(
         return;
       }
 
-      validRows.push({
+      const payload: TablesInsert<"daily_metrics"> = {
         employee_id: employeeId,
         date: row.date,
-        actual_calls: row.actual_calls,
-        actual_architect_meetings: row.actual_architect_meetings,
-        actual_client_meetings: row.actual_client_meetings,
-        actual_site_visits: row.actual_site_visits,
-        remarks: row.remarks?.trim() ? row.remarks.trim() : null,
-      });
+      };
+      if (has("actual_calls")) payload.actual_calls = row.actual_calls;
+      if (has("actual_architect_meetings"))
+        payload.actual_architect_meetings = row.actual_architect_meetings;
+      if (has("actual_client_meetings"))
+        payload.actual_client_meetings = row.actual_client_meetings;
+      if (has("actual_site_visits"))
+        payload.actual_site_visits = row.actual_site_visits;
+      if (has("remarks")) {
+        payload.remarks = row.remarks?.trim() ? row.remarks.trim() : null;
+      }
+      validRows.push(payload);
     });
 
     if (validRows.length > 0) {
@@ -338,9 +389,11 @@ export async function importCityTours(
     target_days: number;
     actual_days: number;
   }[],
+  csvHeaders: string[],
 ): Promise<ImportResult> {
   try {
     const supabase = await assertSuperAdmin();
+    const has = makeHeaderGate(csvHeaders);
     const empMap = await resolveEmployeesByName(
       supabase,
       rows.map((r) => r.name),
@@ -419,14 +472,15 @@ export async function importCityTours(
         return;
       }
 
-      validRows.push({
+      const payload: TablesInsert<"monthly_city_tours"> = {
         employee_id: employeeId,
         month: row.month,
         year: row.year,
         city_id: cityId,
-        target_days: row.target_days,
-        actual_days: row.actual_days,
-      });
+      };
+      if (has("target_days")) payload.target_days = row.target_days;
+      if (has("actual_days")) payload.actual_days = row.actual_days;
+      validRows.push(payload);
     });
 
     if (validRows.length > 0) {

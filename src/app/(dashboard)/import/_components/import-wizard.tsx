@@ -256,8 +256,13 @@ export function ImportWizard() {
         city_tours: importCityTours,
       };
 
+      // Forward the exact CSV header row so the server action can build a
+      // partial-upsert payload: columns the user dropped from the file are
+      // omitted from the Supabase payload, which preserves the existing DB
+      // values on ON CONFLICT UPDATE. Empty cells within a present column
+      // still fall through to the Zod default (0 / "").
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const res = await actions[selectedModule](validRows as any);
+      const res = await actions[selectedModule](validRows as any, headers);
 
       if ("error" in res) {
         toast.error(res.error);
