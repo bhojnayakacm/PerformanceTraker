@@ -75,27 +75,32 @@ export async function MonthlyDataContent({ month, year, query }: Props) {
 
   /* ── Calendar-driven cumulative rollup ────────────────────────────────
    *
-   * We do NOT sum over whichever daily_metrics rows happen to exist —
-   * that's exactly what produced the sparse-data bug. Instead we build
-   * a calendar-day array from day 1 → end-of-range and walk it per
-   * employee, resolving each elapsed working day to either:
+   * Targets and actuals run on different semantic models, so we do them
+   * in two passes per employee:
    *
-   *   row present   → add daily_metrics.target_* / actual_*
-   *   row missing   → add the designated-plan fill for target, 0 for actual
+   *   • Targets — walk the calendar (day 1 → end-of-range), gate on
+   *     working_weekdays, and on each working day either pick up the
+   *     row's target_* or fall back to the sparse-day fill. Plan fill
+   *     precedence (strongest → weakest):
+   *       1. monthly_targets.daily_target_{calls,total_meetings} —
+   *          explicitly set by the "Set Targets" bulk dialog.
+   *       2. MAX of per-day daily_metrics.target_{calls,total_meetings}
+   *          for this employee in the month — the "inferred plan" used
+   *          when the user typed per-day targets into the Daily Logs
+   *          grid without running Bulk Set.
+   *       3. 0 — no target info anywhere.
    *
-   * Plan fill precedence (strongest to weakest):
-   *   1. monthly_targets.daily_target_{calls,total_meetings} — explicitly
-   *      set by the "Set Targets" bulk dialog.
-   *   2. MAX of per-day daily_metrics.target_{calls,total_meetings} for
-   *      this employee in the month — the "inferred plan" used when the
-   *      user typed per-day targets into the Daily Logs grid without
-   *      running Bulk Set. This is what unblocks the "1 row only"
-   *      scenario: one manual entry of 10 tells us the daily rate is 10,
-   *      so every other elapsed working day fills in 10 too.
-   *   3. 0 — no target info anywhere.
+   *   • Actuals — sum every logged daily_metrics row in the date range
+   *     directly, no weekday filter. If an employee made calls on a
+   *     Saturday they happened, and the trigger-maintained
+   *     monthly_actuals SUM(...) (migration 0010) counts them too — we
+   *     match that semantics so the rendered MTD agrees with the
+   *     Daily Logs grid sum. Sparse days never reset; a missing row is
+   *     simply a 0 contribution.
    *
-   * Actuals never infer — a missing row on a past/today working day is
-   * a true "not logged" = 0 contribution.
+   * Every read is wrapped in Number(...) as defense against any column
+   * that ever gets migrated to numeric/bigint and starts arriving as a
+   * string from PostgREST.
    * ─────────────────────────────────────────────────────────────────── */
   const mtdCallTargets: Record<string, number> = {};
   const mtdMeetingTargets: Record<string, number> = {};
@@ -124,19 +129,53 @@ export async function MonthlyDataContent({ month, year, query }: Props) {
       });
     }
 
-    // 2 ── Fetch every daily_metrics row in the range (may be sparse).
-    const { data: dailyRows } = await supabase
-      .from("daily_metrics")
-      .select(
-        "employee_id, date, target_calls, target_total_meetings, actual_calls, actual_architect_meetings, actual_client_meetings, actual_site_visits"
-      )
-      .gte("date", firstOfMonthISO)
-      .lte("date", upperBoundISO);
+    // 2 ── Fetch every daily_metrics row in the range. Paginated to
+    //      defeat PostgREST's max-rows cap (set per-Supabase-project,
+    //      historically defaults to 1000); a typical month easily
+    //      exceeds that — N employees × ~22 working days, e.g. 50
+    //      employees → ~1100 rows → first request truncates mid-
+    //      employee in physical order and downstream MTD silently
+    //      under-counts (the symptom that surfaced as 49 vs 90+).
+    //
+    //      .range() requires a stable .order() — without it the cap
+    //      cutoff lands on different rows across pages and we'd miss/
+    //      duplicate. (employee_id, date) is the unique key per the
+    //      onConflict spec on every upsert into this table, so it's
+    //      a deterministic total order.
+    type DailyRow = {
+      employee_id: string;
+      date: string;
+      target_calls: number;
+      target_total_meetings: number;
+      actual_calls: number;
+      actual_architect_meetings: number;
+      actual_client_meetings: number;
+      actual_site_visits: number;
+    };
+
+    const DAILY_PAGE_SIZE = 1000;
+    const dailyRows: DailyRow[] = [];
+    for (let page = 0; ; page++) {
+      const { data, error } = await supabase
+        .from("daily_metrics")
+        .select(
+          "employee_id, date, target_calls, target_total_meetings, actual_calls, actual_architect_meetings, actual_client_meetings, actual_site_visits"
+        )
+        .gte("date", firstOfMonthISO)
+        .lte("date", upperBoundISO)
+        .order("employee_id", { ascending: true })
+        .order("date", { ascending: true })
+        .range(page * DAILY_PAGE_SIZE, (page + 1) * DAILY_PAGE_SIZE - 1);
+
+      if (error) throw error;
+      if (!data || data.length === 0) break;
+      dailyRows.push(...data);
+      if (data.length < DAILY_PAGE_SIZE) break;
+    }
 
     // 3 ── Index rows by (employee → ISO date) for O(1) per-day lookup.
-    type DailyRow = NonNullable<typeof dailyRows>[number];
     const dailyByEmp = new Map<string, Map<string, DailyRow>>();
-    for (const row of dailyRows ?? []) {
+    for (const row of dailyRows) {
       let byDate = dailyByEmp.get(row.employee_id);
       if (!byDate) {
         byDate = new Map();
@@ -145,7 +184,8 @@ export async function MonthlyDataContent({ month, year, query }: Props) {
       byDate.set(row.date, row);
     }
 
-    // 4 ── Walk the calendar once per employee, accumulating.
+    // 4 ── Per employee: sum actuals (all rows), then walk the calendar
+    //      to accumulate targets (working days, with sparse-day fill).
     for (const emp of employees) {
       const plan = targetsByEmployee.get(emp.id);
       const workingWeekdays = new Set<number>(
@@ -164,17 +204,15 @@ export async function MonthlyDataContent({ month, year, query }: Props) {
       let inferredMeetingsPlan = 0;
       if (empRows) {
         for (const r of empRows.values()) {
-          if (r.target_calls > inferredCallsPlan) {
-            inferredCallsPlan = r.target_calls;
-          }
-          if (r.target_total_meetings > inferredMeetingsPlan) {
-            inferredMeetingsPlan = r.target_total_meetings;
-          }
+          const tc = Number(r.target_calls) || 0;
+          const ttm = Number(r.target_total_meetings) || 0;
+          if (tc > inferredCallsPlan) inferredCallsPlan = tc;
+          if (ttm > inferredMeetingsPlan) inferredMeetingsPlan = ttm;
         }
       }
 
-      const planCalls = plan?.daily_target_calls ?? 0;
-      const planMeetings = plan?.daily_target_total_meetings ?? 0;
+      const planCalls = Number(plan?.daily_target_calls) || 0;
+      const planMeetings = Number(plan?.daily_target_total_meetings) || 0;
       const sparseCallsFill = planCalls > 0 ? planCalls : inferredCallsPlan;
       const sparseMeetingsFill =
         planMeetings > 0 ? planMeetings : inferredMeetingsPlan;
@@ -186,22 +224,31 @@ export async function MonthlyDataContent({ month, year, query }: Props) {
       let aClient = 0;
       let aSite = 0;
 
+      // Pass 1 — Actuals. Sum every logged row in range, no weekday
+      // filter. The previous version routed actuals through the
+      // weekday-gated calendar loop, which silently dropped any row
+      // that fell on a non-working weekday and made the rendered MTD
+      // diverge from the Daily Logs sum.
+      if (empRows) {
+        for (const r of empRows.values()) {
+          aCalls     += Number(r.actual_calls)              || 0;
+          aArchitect += Number(r.actual_architect_meetings) || 0;
+          aClient    += Number(r.actual_client_meetings)    || 0;
+          aSite      += Number(r.actual_site_visits)        || 0;
+        }
+      }
+
+      // Pass 2 — Targets. Walk the calendar with the weekday filter so
+      // sparse-day fill applies only to elapsed working days.
       for (const day of calendar) {
         if (!workingWeekdays.has(day.weekday)) continue;
 
         const row = empRows?.get(day.iso);
         if (row) {
-          // Row present → pick up its targets + actuals directly.
-          tCalls += row.target_calls;
-          tMeetings += row.target_total_meetings;
-          aCalls += row.actual_calls;
-          aArchitect += row.actual_architect_meetings;
-          aClient += row.actual_client_meetings;
-          aSite += row.actual_site_visits;
+          tCalls    += Number(row.target_calls)          || 0;
+          tMeetings += Number(row.target_total_meetings) || 0;
         } else {
-          // Row missing on an elapsed working day → fill target from
-          // plan (or inferred plan); actual stays 0 (not logged).
-          tCalls += sparseCallsFill;
+          tCalls    += sparseCallsFill;
           tMeetings += sparseMeetingsFill;
         }
       }
