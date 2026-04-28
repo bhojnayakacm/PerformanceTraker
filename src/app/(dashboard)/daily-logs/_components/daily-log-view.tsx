@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect, useTransition, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useTransition, useCallback, useMemo, useRef, memo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { useDebouncedSearch } from "@/hooks/use-debounced-search";
 import {
+  ArrowUpDown,
   ChevronLeft,
   ChevronRight,
   CalendarDays,
@@ -23,10 +24,20 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
+import {
+  DndTableProvider,
+  DragHandleCell,
+  DragHandleHeader,
+  RowDragPreview,
+  SortableRow,
+  useTableDnD,
+} from "@/components/data-table/sortable-table";
 import type { Employee, UserRole, DailyMetric } from "@/lib/types";
-import { getInitials, getAvatarColor } from "@/lib/utils";
+import { cn, getInitials, getAvatarColor } from "@/lib/utils";
 import { saveDailyMetrics } from "../actions";
 import { BulkTargetsDialog } from "./bulk-targets-dialog";
+
+const DAILY_LOGS_ORDER_KEY = "daily_logs_custom_order";
 
 /* ── Types ── */
 
@@ -145,9 +156,24 @@ function getAchievementColors(
 
 type ResizableKey = "employee" | "metrics";
 
+/**
+ * PERF: This hook intentionally does NOT call setState during a resize drag
+ * (the original implementation did, and that's what was pegging the main
+ * thread to "Page Unresponsive" with 100+ employee rows on screen).
+ *
+ * Instead, the move handler writes a CSS variable directly onto the <table>
+ * element via a ref. Browsers repaint column widths from CSS vars without
+ * any React reconciliation work — same speed as a hardware-accelerated
+ * transform. State is committed exactly once, on pointer-up — same semantics
+ * as TanStack's `columnResizeMode: 'onEnd'`.
+ *
+ * Consumers wire the returned `tableRef` onto their <table> and read CSS
+ * vars in their <col> and minWidth styles.
+ */
 function useColumnResize(initial: Record<ResizableKey, number>) {
   const [widths, setWidths] = useState(initial);
   const [draggingKey, setDraggingKey] = useState<ResizableKey | null>(null);
+  const tableRef = useRef<HTMLTableElement>(null);
   const widthsRef = useRef(widths);
   widthsRef.current = widths;
   const active = useRef<{
@@ -155,7 +181,28 @@ function useColumnResize(initial: Record<ResizableKey, number>) {
     startX: number;
     startWidth: number;
     minWidth: number;
+    currentWidth: number;
   } | null>(null);
+
+  // PERF: requestAnimationFrame throttle. A high-refresh mouse fires
+  // pointermove at 144Hz; each browser layout pass on a 50-row table is
+  // 5–10ms. Without throttling the queue of pending layouts overruns the
+  // frame budget, the main thread can't drain it, and the browser raises
+  // "Page Unresponsive". RAF coalesces to one DOM write per frame, capping
+  // layout work at the display's refresh rate.
+  const rafIdRef = useRef<number | null>(null);
+  const pendingRef = useRef<{ key: ResizableKey; width: number } | null>(null);
+
+  const flushPending = useCallback(() => {
+    rafIdRef.current = null;
+    const pending = pendingRef.current;
+    if (!pending) return;
+    pendingRef.current = null;
+    tableRef.current?.style.setProperty(
+      `--col-${pending.key}-w`,
+      `${pending.width}px`,
+    );
+  }, []);
 
   const onResizeStart = useCallback(
     (
@@ -166,11 +213,13 @@ function useColumnResize(initial: Record<ResizableKey, number>) {
       e.preventDefault();
       e.stopPropagation();
       e.currentTarget.setPointerCapture(e.pointerId);
+      const startWidth = widthsRef.current[key];
       active.current = {
         key,
         startX: e.clientX,
-        startWidth: widthsRef.current[key],
+        startWidth,
         minWidth,
+        currentWidth: startWidth,
       };
       setDraggingKey(key);
       document.body.style.cursor = "col-resize";
@@ -179,17 +228,26 @@ function useColumnResize(initial: Record<ResizableKey, number>) {
     []
   );
 
-  const onResizeMove = useCallback((e: React.PointerEvent<HTMLElement>) => {
-    if (!active.current) return;
-    const { key, startX, startWidth, minWidth } = active.current;
-    const next = Math.max(
-      minWidth,
-      Math.round(startWidth + (e.clientX - startX))
-    );
-    setWidths((prev) =>
-      prev[key] === next ? prev : { ...prev, [key]: next }
-    );
-  }, []);
+  // Queues a DOM write — does NOT call setState and does NOT touch the DOM
+  // synchronously. The actual style mutation happens on the next animation
+  // frame via `flushPending`.
+  const onResizeMove = useCallback(
+    (e: React.PointerEvent<HTMLElement>) => {
+      if (!active.current) return;
+      const { key, startX, startWidth, minWidth } = active.current;
+      const next = Math.max(
+        minWidth,
+        Math.round(startWidth + (e.clientX - startX)),
+      );
+      if (active.current.currentWidth === next) return;
+      active.current.currentWidth = next;
+      pendingRef.current = { key, width: next };
+      if (rafIdRef.current === null) {
+        rafIdRef.current = requestAnimationFrame(flushPending);
+      }
+    },
+    [flushPending],
+  );
 
   const onResizeEnd = useCallback((e: React.PointerEvent<HTMLElement>) => {
     if (!active.current) return;
@@ -198,13 +256,47 @@ function useColumnResize(initial: Record<ResizableKey, number>) {
     } catch {
       /* already released */
     }
+    // Drain any RAF-pending write before committing React state so the
+    // inline style React sets on the next render matches the DOM.
+    if (rafIdRef.current !== null) {
+      cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = null;
+    }
+    if (pendingRef.current) {
+      tableRef.current?.style.setProperty(
+        `--col-${pendingRef.current.key}-w`,
+        `${pendingRef.current.width}px`,
+      );
+      pendingRef.current = null;
+    }
+    const { key, currentWidth } = active.current;
+    setWidths((prev) =>
+      prev[key] === currentWidth ? prev : { ...prev, [key]: currentWidth }
+    );
     active.current = null;
     setDraggingKey(null);
     document.body.style.cursor = "";
     document.body.style.userSelect = "";
   }, []);
 
-  return { widths, draggingKey, onResizeStart, onResizeMove, onResizeEnd };
+  // Cleanup any pending RAF on unmount.
+  useEffect(() => {
+    return () => {
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current);
+        rafIdRef.current = null;
+      }
+    };
+  }, []);
+
+  return {
+    widths,
+    draggingKey,
+    tableRef,
+    onResizeStart,
+    onResizeMove,
+    onResizeEnd,
+  };
 }
 
 /**
@@ -267,26 +359,26 @@ export function DailyLogView({
   const {
     widths: colWidths,
     draggingKey,
+    tableRef,
     onResizeStart,
     onResizeMove,
     onResizeEnd,
   } = useColumnResize({ employee: 260, metrics: 660 });
   const REMARKS_MIN_WIDTH = 280;
-  const tableMinWidth =
-    colWidths.employee + colWidths.metrics + REMARKS_MIN_WIDTH;
+  const DRAG_HANDLE_WIDTH = 40;
 
-  // Measure thead height so the "metrics" handle (inside a single-row <th>) can
-  // span both header rows and match the Employee handle's visual height.
+  // Measure thead height once on mount so the "metrics" resize handle (which
+  // lives in a single-row <th>) can span both header rows.
+  //
+  // PERF: We deliberately do NOT use a ResizeObserver here. A live observer
+  // creates a layout-feedback loop: column resize → thead reflow → RO fires
+  // → setState → re-render → potentially more reflow. With our CSS-var-based
+  // resize the layout is stable (headers don't wrap), so a one-shot read
+  // is enough. Window resize won't change thead height in any meaningful way.
   const theadRef = useRef<HTMLTableSectionElement>(null);
   const [theadHeight, setTheadHeight] = useState(80);
   useEffect(() => {
-    const el = theadRef.current;
-    if (!el) return;
-    const update = () => setTheadHeight(el.offsetHeight);
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    return () => ro.disconnect();
+    if (theadRef.current) setTheadHeight(theadRef.current.offsetHeight);
   }, []);
 
   const [calendarOpen, setCalendarOpen] = useState(false);
@@ -298,15 +390,45 @@ export function DailyLogView({
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
+  // Apply persisted custom order BEFORE search filter so reordering survives
+  // a typed-then-cleared search query, and so newly-fetched employees that
+  // haven't been ordered yet get appended at the bottom by useTableDnD.
+  const getEmpId = useCallback((emp: Employee) => emp.id, []);
+  const { orderedData, rowIds, handleDragEnd, resetOrder, hasCustomOrder } =
+    useTableDnD<Employee>({
+      data: employees,
+      storageKey: DAILY_LOGS_ORDER_KEY,
+      getId: getEmpId,
+    });
+
   const filteredEmployees = useMemo(() => {
-    if (!searchFilter) return employees;
+    if (!searchFilter) return orderedData;
     const search = searchFilter.toLowerCase();
-    return employees.filter(
+    return orderedData.filter(
       (emp) =>
         emp.name.toLowerCase().includes(search) ||
         emp.emp_id.toLowerCase().includes(search)
     );
-  }, [employees, searchFilter]);
+  }, [orderedData, searchFilter]);
+
+  // ── Sortable headers ──
+  // Click-toggle: none → asc → desc → none. Sort uses `originalEntries`
+  // (server snapshot) rather than the live draft, so row order doesn't
+  // bounce around as the user types into target inputs.
+  type SortField = "name" | "target_total_meetings" | "target_calls";
+  const [sortConfig, setSortConfig] = useState<{
+    field: SortField;
+    dir: "asc" | "desc";
+  } | null>(null);
+  const isSorting = sortConfig !== null;
+
+  const handleSort = useCallback((field: SortField) => {
+    setSortConfig((prev) => {
+      if (!prev || prev.field !== field) return { field, dir: "asc" };
+      if (prev.dir === "asc") return { field, dir: "desc" };
+      return null;
+    });
+  }, []);
 
   const selectedDate = useMemo(() => {
     const [y, m, d] = date.split("-").map(Number);
@@ -342,6 +464,57 @@ export function DailyLogView({
     setOriginalEntries(init);
     setEntries(init);
   }, [initialData, employees]);
+
+  // Sorted view of filteredEmployees. When sort is active, the SortableRow's
+  // `disabled` prop is set to true so users don't drag against an order that
+  // would visually snap back on the next render.
+  const sortedEmployees = useMemo(() => {
+    if (!sortConfig) return filteredEmployees;
+    const dir = sortConfig.dir === "asc" ? 1 : -1;
+    const field = sortConfig.field;
+    return [...filteredEmployees].sort((a, b) => {
+      let cmp = 0;
+      if (field === "name") {
+        cmp = a.name.localeCompare(b.name);
+      } else {
+        cmp =
+          (originalEntries[a.id]?.[field] ?? 0) -
+          (originalEntries[b.id]?.[field] ?? 0);
+      }
+      return cmp * dir;
+    });
+  }, [filteredEmployees, sortConfig, originalEntries]);
+
+  const handleResetOrder = useCallback(() => {
+    setSortConfig(null);
+    resetOrder();
+  }, [resetOrder]);
+
+  // O(1) lookup for the drag overlay — beats find() over orderedData when
+  // dragOverlay re-renders.
+  const employeeMap = useMemo(() => {
+    const map = new Map<string, Employee>();
+    for (const emp of orderedData) map.set(emp.id, emp);
+    return map;
+  }, [orderedData]);
+
+  const renderDragOverlay = useCallback(
+    (activeId: string) => {
+      const emp = employeeMap.get(activeId);
+      if (!emp) return null;
+      return (
+        <RowDragPreview
+          initials={getInitials(emp.name)}
+          avatarClassName={getAvatarColor(emp.name)}
+          name={emp.name}
+          subtitle={
+            emp.location ? `${emp.emp_id} • ${emp.location}` : emp.emp_id
+          }
+        />
+      );
+    },
+    [employeeMap],
+  );
 
   // Smart dirty — only true when draft actually differs from server baseline
   const dirty = useMemo(() => {
@@ -560,28 +733,70 @@ export function DailyLogView({
       >
         <CardContent className="flex-1 min-h-0 flex flex-col p-0">
           <div className="flex-1 min-h-0 overflow-auto">
+            <DndTableProvider
+              id="daily-logs-dnd"
+              rowIds={rowIds}
+              onDragEnd={handleDragEnd}
+              renderOverlay={renderDragOverlay}
+            >
             <table
+              ref={tableRef}
               className="w-full border-collapse text-sm"
-              style={{ tableLayout: "fixed", minWidth: tableMinWidth }}
+              style={
+                {
+                  tableLayout: "fixed",
+                  // CSS vars drive col widths so the resize hook can update
+                  // them via DOM ref during a drag without re-rendering React.
+                  // React-controlled values here match the active drag value
+                  // on commit, so there's no flicker on pointer-up.
+                  "--col-employee-w": `${colWidths.employee}px`,
+                  "--col-metrics-w": `${colWidths.metrics}px`,
+                  minWidth: `calc(${DRAG_HANDLE_WIDTH}px + var(--col-employee-w) + var(--col-metrics-w) + ${REMARKS_MIN_WIDTH}px)`,
+                } as React.CSSProperties
+              }
             >
               <colgroup>
-                <col style={{ width: colWidths.employee }} />
-                <col style={{ width: Math.round(colWidths.metrics / 6) }} />
-                <col style={{ width: Math.round(colWidths.metrics / 6) }} />
-                <col style={{ width: Math.round(colWidths.metrics / 6) }} />
-                <col style={{ width: Math.round(colWidths.metrics / 6) }} />
-                <col style={{ width: Math.round(colWidths.metrics / 6) }} />
-                <col style={{ width: Math.round(colWidths.metrics / 6) }} />
+                <col style={{ width: DRAG_HANDLE_WIDTH }} />
+                <col style={{ width: "var(--col-employee-w)" }} />
+                <col style={{ width: "calc(var(--col-metrics-w) / 6)" }} />
+                <col style={{ width: "calc(var(--col-metrics-w) / 6)" }} />
+                <col style={{ width: "calc(var(--col-metrics-w) / 6)" }} />
+                <col style={{ width: "calc(var(--col-metrics-w) / 6)" }} />
+                <col style={{ width: "calc(var(--col-metrics-w) / 6)" }} />
+                <col style={{ width: "calc(var(--col-metrics-w) / 6)" }} />
                 <col />
               </colgroup>
               <thead ref={theadRef} className="sticky top-0 z-20 bg-slate-100 dark:bg-slate-800">
                 {/* Group headers */}
                 <tr>
+                  {/* Corner cell: bumped to z-30 because thead is sticky-top
+                      and DragHandleHeader is sticky-left — both axes intersect here.
+                      The reset icon shows when there's a custom DnD order OR an active sort. */}
+                  <DragHandleHeader
+                    rowSpan={2}
+                    className="z-30 border-r border-r-slate-200 dark:border-r-slate-700 border-b-2 border-b-slate-300 dark:border-b-slate-600"
+                    onReset={handleResetOrder}
+                    resetVisible={hasCustomOrder || isSorting}
+                  />
                   <th
-                    className="text-left p-3 text-sm font-semibold text-slate-700 dark:text-slate-300 tracking-wide sticky left-0 bg-slate-100 dark:bg-slate-800 z-30 border-r-2 border-r-slate-300 dark:border-r-slate-600 border-b-2 border-b-slate-300 dark:border-b-slate-600"
+                    className="text-left p-3 text-sm font-semibold text-slate-700 dark:text-slate-300 tracking-wide sticky left-[40px] bg-slate-100 dark:bg-slate-800 z-30 border-r-2 border-r-slate-300 dark:border-r-slate-600 border-b-2 border-b-slate-300 dark:border-b-slate-600"
                     rowSpan={2}
                   >
-                    Employee
+                    <button
+                      type="button"
+                      onClick={() => handleSort("name")}
+                      className="-ml-2 inline-flex items-center gap-1.5 rounded-md px-2 py-1 transition-colors hover:bg-slate-200/60 dark:hover:bg-slate-700/60"
+                    >
+                      Employee
+                      <ArrowUpDown
+                        className={cn(
+                          "h-3.5 w-3.5",
+                          sortConfig?.field === "name"
+                            ? "text-primary"
+                            : "text-slate-400",
+                        )}
+                      />
+                    </button>
                     {mounted && (
                       <ResizeHandle
                         onStart={(e) => onResizeStart("employee", e, 180)}
@@ -624,7 +839,21 @@ export function DailyLogView({
                 {/* Sub-headers */}
                 <tr>
                   <th className="text-center px-1.5 py-2 text-[11px] uppercase tracking-wider font-semibold text-slate-500 dark:text-slate-400 bg-slate-200/70 dark:bg-slate-700/50 border-r border-r-slate-200 dark:border-r-slate-700 border-b-2 border-b-slate-300 dark:border-b-slate-600">
-                    Target
+                    <button
+                      type="button"
+                      onClick={() => handleSort("target_total_meetings")}
+                      className="inline-flex items-center gap-1 rounded-md px-1 py-0.5 transition-colors hover:bg-slate-300/40 dark:hover:bg-slate-600/40"
+                    >
+                      Target
+                      <ArrowUpDown
+                        className={cn(
+                          "h-3 w-3",
+                          sortConfig?.field === "target_total_meetings"
+                            ? "text-primary"
+                            : "text-slate-400",
+                        )}
+                      />
+                    </button>
                   </th>
                   <th className="text-center px-1.5 py-2 text-[11px] uppercase tracking-wider font-semibold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 border-r border-r-slate-200 dark:border-r-slate-700 border-b-2 border-b-slate-300 dark:border-b-slate-600">
                     Architect
@@ -636,7 +865,21 @@ export function DailyLogView({
                     Site Visits
                   </th>
                   <th className="text-center px-1.5 py-2 text-[11px] uppercase tracking-wider font-semibold text-slate-500 dark:text-slate-400 bg-slate-200/70 dark:bg-slate-700/50 border-r border-r-slate-200 dark:border-r-slate-700 border-b-2 border-b-slate-300 dark:border-b-slate-600">
-                    Target
+                    <button
+                      type="button"
+                      onClick={() => handleSort("target_calls")}
+                      className="inline-flex items-center gap-1 rounded-md px-1 py-0.5 transition-colors hover:bg-slate-300/40 dark:hover:bg-slate-600/40"
+                    >
+                      Target
+                      <ArrowUpDown
+                        className={cn(
+                          "h-3 w-3",
+                          sortConfig?.field === "target_calls"
+                            ? "text-primary"
+                            : "text-slate-400",
+                        )}
+                      />
+                    </button>
                   </th>
                   <th className="text-center px-1.5 py-2 text-[11px] uppercase tracking-wider font-semibold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 border-r-2 border-r-slate-300 dark:border-r-slate-600 border-b-2 border-b-slate-300 dark:border-b-slate-600">
                     Actual
@@ -644,7 +887,7 @@ export function DailyLogView({
                 </tr>
               </thead>
               <tbody>
-                {filteredEmployees.map((emp) => (
+                {sortedEmployees.map((emp) => (
                   <EmployeeRow
                     key={emp.id}
                     employee={emp}
@@ -653,13 +896,14 @@ export function DailyLogView({
                     canEditTargets={canEditTargets}
                     canEdit={canEdit}
                     isPastOrToday={isPastOrToday}
+                    isDragDisabled={isSorting}
                     onChange={handleChange}
                     onRemarkChange={handleRemarkChange}
                   />
                 ))}
-                {filteredEmployees.length === 0 && (
+                {sortedEmployees.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="py-16">
+                    <td colSpan={9} className="py-16">
                       <div className="flex flex-col items-center gap-3">
                         <div className="flex size-12 items-center justify-center rounded-full bg-muted/60">
                           <CalendarDays className="h-6 w-6 text-muted-foreground/80" />
@@ -682,6 +926,7 @@ export function DailyLogView({
                 )}
               </tbody>
             </table>
+            </DndTableProvider>
           </div>
         </CardContent>
       </Card>
@@ -703,13 +948,18 @@ export function DailyLogView({
 const INPUT_BASE =
   "h-8 w-16 block mx-auto text-sm px-1 [text-align:center] border-transparent bg-transparent rounded-md transition-colors hover:border-border/60 hover:bg-white focus-visible:bg-white focus-visible:border-primary/30 focus-visible:ring-2 focus-visible:ring-primary/15 disabled:hover:border-transparent disabled:hover:bg-transparent [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none";
 
-function EmployeeRow({
+// memo() prevents re-rendering every row on every keystroke. Parent passes
+// stable useCallback'd onChange/onRemarkChange and `values` is a stable
+// reference unless THIS row's entries actually changed — so unaffected rows
+// shallow-equal-skip on every edit. Massive win on large daily-logs lists.
+const EmployeeRow = memo(function EmployeeRow({
   employee,
   values,
   isDirty,
   canEditTargets,
   canEdit,
   isPastOrToday,
+  isDragDisabled,
   onChange,
   onRemarkChange,
 }: {
@@ -719,6 +969,9 @@ function EmployeeRow({
   canEditTargets: boolean;
   canEdit: boolean;
   isPastOrToday: boolean;
+  /** When sort is active, drag is suppressed so the visual order
+   * doesn't snap back against the persisted custom order. */
+  isDragDisabled: boolean;
   onChange: (empId: string, field: MetricFields, value: string) => void;
   onRemarkChange: (empId: string, value: string) => void;
 }) {
@@ -741,15 +994,23 @@ function EmployeeRow({
   );
 
   return (
-    <tr
+    <SortableRow
+      id={employee.id}
+      disabled={isDragDisabled}
       className={`border-b border-border/40 transition-colors ${
         isDirty
           ? "bg-amber-50/70 dark:bg-amber-950/20"
           : "hover:bg-muted/20"
       }`}
     >
-      {/* Employee */}
-      <td className="p-3 sticky left-0 bg-inherit z-10 border-r-2 border-r-slate-300 dark:border-r-slate-600">
+      {/* Drag handle — sticky-left + opaque bg-white from <DragHandleCell> defaults
+          (must be opaque to prevent horizontal-scroll bleed-through; row-level
+          dirty/hover bg won't show on sticky cells, but the "edited" badge in
+          the Employee column makes dirty state obvious). */}
+      <DragHandleCell cellClassName="border-r border-r-slate-200 dark:border-r-slate-700" />
+
+      {/* Employee — sits flush against the 40px drag handle, also opaque. */}
+      <td className="p-3 sticky left-[40px] bg-white dark:bg-slate-900 z-10 border-r-2 border-r-slate-300 dark:border-r-slate-600">
         <div className="flex items-center gap-2.5">
           <div
             className={`flex size-7 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold ${getAvatarColor(employee.name)}`}
@@ -895,6 +1156,6 @@ function EmployeeRow({
           placeholder="Add note..."
         />
       </td>
-    </tr>
+    </SortableRow>
   );
-}
+});

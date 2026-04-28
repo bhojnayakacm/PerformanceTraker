@@ -4,6 +4,7 @@ import { type ColumnDef } from "@tanstack/react-table";
 import { ArrowUpDown, UserPlus } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DRAG_HANDLE_COL_ID } from "@/components/data-table/sortable-table";
 import type { Profile } from "@/lib/types";
 import { getInitials, getAvatarColor } from "@/lib/utils";
 
@@ -44,6 +45,14 @@ export function getColumns(
 ): ColumnDef<Profile>[] {
   return [
     {
+      id: DRAG_HANDLE_COL_ID,
+      header: () => null,
+      cell: () => null,
+      enableSorting: false,
+      enableGlobalFilter: false,
+      size: 40,
+    },
+    {
       accessorKey: "full_name",
       header: ({ column }) => (
         <Button
@@ -79,7 +88,16 @@ export function getColumns(
     },
     {
       accessorKey: "role",
-      header: "Role",
+      header: ({ column }) => (
+        <Button
+          variant="ghost"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          className="-ml-3"
+        >
+          Role
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      ),
       cell: ({ row }) => {
         const role = row.original.role;
         const config = ROLE_CONFIG[role] ?? ROLE_CONFIG.viewer;
@@ -110,7 +128,16 @@ export function getColumns(
     },
     {
       accessorKey: "is_active",
-      header: "Status",
+      header: ({ column }) => (
+        <Button
+          variant="ghost"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          className="-ml-3"
+        >
+          Status
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      ),
       cell: ({ row }) => {
         const isActive = row.original.is_active;
         const isSelf = row.original.id === currentUserId;

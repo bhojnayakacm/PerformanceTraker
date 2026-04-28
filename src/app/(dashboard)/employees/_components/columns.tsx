@@ -10,6 +10,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { DRAG_HANDLE_COL_ID } from "@/components/data-table/sortable-table";
 import type { Employee, UserRole } from "@/lib/types";
 import { getInitials, getAvatarColor } from "@/lib/utils";
 
@@ -23,6 +24,17 @@ export function getColumns(
   actions: ColumnActions
 ): ColumnDef<Employee>[] {
   const columns: ColumnDef<Employee>[] = [
+    {
+      // Empty placeholder column — actual GripVertical button is rendered
+      // by <DragHandleCell> in the row mapper, which receives drag listeners
+      // from the parent <SortableRow>'s useSortable hook.
+      id: DRAG_HANDLE_COL_ID,
+      header: () => null,
+      cell: () => null,
+      enableSorting: false,
+      enableGlobalFilter: false,
+      size: 40,
+    },
     {
       accessorKey: "name",
       header: ({ column }) => (
@@ -97,7 +109,16 @@ export function getColumns(
     },
     {
       accessorKey: "is_active",
-      header: "Status",
+      header: ({ column }) => (
+        <Button
+          variant="ghost"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          className="-ml-3"
+        >
+          Status
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      ),
       cell: ({ row }) => {
         const isActive = row.getValue("is_active") as boolean;
         return (
