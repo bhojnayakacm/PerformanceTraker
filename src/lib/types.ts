@@ -25,6 +25,27 @@ export type EmployeeMonthlyData = {
   cityTours: CityTourWithCity[];
 };
 
+/** Pair of cumulative actual + target totals for a single metric over a
+ *  multi-month period. Avg-per-month is derived at render time from the
+ *  enclosing row's `numberOfMonths` so the type stays scalar-only. */
+export type CumulativeMetric = {
+  actual: number;
+  target: number;
+};
+
+/** One row of the Cumulative Data view. `numberOfMonths` is the inclusive
+ *  count of calendar months in the selected range (used as the divisor for
+ *  every monthly-average display in the row). `totalCosting` has no target,
+ *  so it stays a bare number rather than a `CumulativeMetric`. */
+export type EmployeeCumulativeData = {
+  employee: Employee;
+  numberOfMonths: number;
+  clientVisits: CumulativeMetric;
+  dispatchedSqft: CumulativeMetric;
+  tourDays: CumulativeMetric;
+  totalCosting: number;
+};
+
 export type Profile = Tables<"profiles">;
 
 export type UserRole = "super_admin" | "manager" | "editor" | "viewer";
