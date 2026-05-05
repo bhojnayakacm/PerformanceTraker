@@ -54,6 +54,34 @@ const MONTHS = [
   "December",
 ];
 
+const MONTHS_SHORT = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+/* Calendar-quarter presets — the dialog scopes to a single Year, so we use
+ * calendar quarters (Jan-Mar = Q1) rather than fiscal-year quarters to avoid
+ * the "Q4 in 2025 means Jan-Mar 2025 or 2026?" ambiguity that the FY framing
+ * introduces. Picking a preset replaces the current selection — explicit
+ * intent, no compounding from prior clicks. */
+const MONTH_PRESETS = [
+  { label: "Q1", months: [1, 2, 3] },
+  { label: "Q2", months: [4, 5, 6] },
+  { label: "Q3", months: [7, 8, 9] },
+  { label: "Q4", months: [10, 11, 12] },
+  { label: "Full Year", months: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] },
+] as const;
+
 const WEEKDAYS = [
   { key: 1, label: "Mon" },
   { key: 2, label: "Tue" },
@@ -80,7 +108,12 @@ export function BulkTargetsDialog({
   defaultYear,
 }: Props) {
   const [isPending, startTransition] = useTransition();
-  const [month, setMonth] = useState(defaultMonth);
+  /* Months as a Set so toggle/has are O(1) and the data model says "membership"
+   * instead of "ordered list". We sort to an array only when we hand off to the
+   * server action or the display layer. */
+  const [months, setMonths] = useState<Set<number>>(
+    () => new Set([defaultMonth]),
+  );
   const [year, setYear] = useState(defaultYear);
 
   /* ── Multi-select state ── */
@@ -101,7 +134,7 @@ export function BulkTargetsDialog({
   // Reset form when dialog opens
   useEffect(() => {
     if (open) {
-      setMonth(defaultMonth);
+      setMonths(new Set([defaultMonth]));
       setYear(defaultYear);
       setIsAllSelected(true);
       setSelectedIds(new Set());
@@ -196,16 +229,50 @@ export function BulkTargetsDialog({
 
   const employeeCount = isAllSelected ? employees.length : selectedIds.size;
 
+  const toggleMonth = useCallback((m: number) => {
+    setMonths((prev) => {
+      const next = new Set(prev);
+      if (next.has(m)) next.delete(m);
+      else next.add(m);
+      return next;
+    });
+  }, []);
+
+  /* Presets replace the selection rather than merging into it — clicking "Q1"
+   * after a stray Sept means the user wants Q1, not Q1 + Sept. Less surprising. */
+  const applyPreset = useCallback((preset: readonly number[]) => {
+    setMonths(new Set(preset));
+  }, []);
+
+  const sortedMonths = useMemo(
+    () => Array.from(months).sort((a, b) => a - b),
+    [months],
+  );
+
+  const activePresetIndex = useMemo(() => {
+    return MONTH_PRESETS.findIndex(
+      (p) =>
+        p.months.length === months.size && p.months.every((m) => months.has(m)),
+    );
+  }, [months]);
+
+  /* Sum working days across all selected months. We deliberately recompute per
+   * month (rather than caching by month-of-year) — N is at most 12 and the per-
+   * month cost is two `new Date(...)` calls × ~30 iterations, which is dwarfed
+   * by even one React render. Premature memoization here would just add code. */
   const workingDayCount = useMemo(() => {
-    const daysInMonth = new Date(year, month, 0).getDate();
     let count = 0;
-    for (let d = 1; d <= daysInMonth; d++) {
-      const weekday = new Date(year, month - 1, d).getDay();
-      if (activeDays.has(weekday)) count++;
+    for (const m of months) {
+      const daysInMonth = new Date(year, m, 0).getDate();
+      for (let d = 1; d <= daysInMonth; d++) {
+        const weekday = new Date(year, m - 1, d).getDay();
+        if (activeDays.has(weekday)) count++;
+      }
     }
     return count;
-  }, [month, year, activeDays]);
+  }, [months, year, activeDays]);
 
+  const monthCount = months.size;
   const totalEntries = workingDayCount * employeeCount;
 
   const selectedEmployees = useMemo(() => {
@@ -214,6 +281,10 @@ export function BulkTargetsDialog({
   }, [isAllSelected, selectedIds, employees]);
 
   const handleApply = () => {
+    if (monthCount === 0) {
+      toast.error("Select at least one month");
+      return;
+    }
     if (employeeCount === 0) {
       toast.error("Select at least one employee");
       return;
@@ -230,7 +301,7 @@ export function BulkTargetsDialog({
     startTransition(async () => {
       const result = await bulkSetMonthlyTargets({
         employee_ids: isAllSelected ? null : Array.from(selectedIds),
-        month,
+        months: sortedMonths,
         year,
         target_calls: targetCalls ?? 0,
         target_total_meetings: targetMeetings ?? 0,
@@ -243,7 +314,7 @@ export function BulkTargetsDialog({
       }
 
       toast.success(
-        `Applied targets to ${workingDayCount} days for ${employeeCount} employee${employeeCount > 1 ? "s" : ""}`
+        `Applied targets to ${workingDayCount} day${workingDayCount === 1 ? "" : "s"} across ${monthCount} month${monthCount === 1 ? "" : "s"} for ${employeeCount} employee${employeeCount === 1 ? "" : "s"}`,
       );
       onOpenChange(false);
     });
@@ -251,55 +322,99 @@ export function BulkTargetsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Target className="h-5 w-5 text-primary" />
             Set Monthly Targets
           </DialogTitle>
           <DialogDescription>
-            Apply uniform daily targets across all working days in a month.
+            Apply uniform daily targets across the working days of one or more
+            months.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-5">
-          {/* Month & Year */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <Label>Month</Label>
-              <Select
-                value={String(month)}
-                onValueChange={(v) => setMonth(Number(v))}
-              >
-                <SelectTrigger className="w-full">
-                  <span className="flex-1 text-left">{MONTHS[month - 1]}</span>
-                </SelectTrigger>
-                <SelectContent align="start" alignItemWithTrigger={false}>
-                  {MONTHS.map((name, i) => (
-                    <SelectItem key={i + 1} value={String(i + 1)}>
-                      {name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+        <div className="space-y-6">
+          {/* Months — primary entry point. Year sits inline on the right since
+              it's the same scope (a single calendar year), and pulling it out
+              of the way leaves the month grid as the visual focus. */}
+          <div className="space-y-2.5">
+            <div className="flex items-center justify-between gap-3">
+              <Label>Months</Label>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">Year</span>
+                <Select
+                  value={String(year)}
+                  onValueChange={(v) => setYear(Number(v))}
+                >
+                  <SelectTrigger className="h-8 w-[88px]">
+                    <span className="flex-1 text-left">{year}</span>
+                  </SelectTrigger>
+                  <SelectContent align="end" alignItemWithTrigger={false}>
+                    {years.map((y) => (
+                      <SelectItem key={y} value={String(y)}>
+                        {y}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label>Year</Label>
-              <Select
-                value={String(year)}
-                onValueChange={(v) => setYear(Number(v))}
-              >
-                <SelectTrigger className="w-full">
-                  <span className="flex-1 text-left">{year}</span>
-                </SelectTrigger>
-                <SelectContent align="start" alignItemWithTrigger={false}>
-                  {years.map((y) => (
-                    <SelectItem key={y} value={String(y)}>
-                      {y}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+
+            {/* Quick-selection presets — pill row, mirrors the cumulative-data
+                range selector for cross-page consistency. */}
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400 mb-1.5">
+                Quick Selection
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {MONTH_PRESETS.map((p, i) => {
+                  const isActive = i === activePresetIndex;
+                  return (
+                    <button
+                      key={p.label}
+                      type="button"
+                      onClick={() => applyPreset(p.months)}
+                      className={cn(
+                        "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
+                        isActive
+                          ? "border-indigo-200 bg-indigo-50 text-indigo-700"
+                          : "border-slate-200 bg-white text-slate-600 hover:border-indigo-200 hover:bg-indigo-50/60 hover:text-indigo-700",
+                      )}
+                    >
+                      {isActive && <Check className="h-3 w-3" />}
+                      {p.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* 4×3 month toggle grid. We use 3-letter labels so each cell
+                stays compact and uniform — full names live in the title
+                attribute for hover/screen-reader fidelity. */}
+            <div className="grid grid-cols-4 gap-1.5">
+              {MONTHS_SHORT.map((short, i) => {
+                const m = i + 1;
+                const isSelected = months.has(m);
+                return (
+                  <button
+                    key={short}
+                    type="button"
+                    onClick={() => toggleMonth(m)}
+                    title={MONTHS[i]}
+                    aria-pressed={isSelected}
+                    className={cn(
+                      "rounded-lg py-2 text-xs font-medium transition-colors",
+                      isSelected
+                        ? "bg-primary text-primary-foreground shadow-sm"
+                        : "bg-muted text-muted-foreground hover:bg-muted/80",
+                    )}
+                  >
+                    {short}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -453,24 +568,10 @@ export function BulkTargetsDialog({
             </div>
           </div>
 
-          {/* Daily Targets */}
+          {/* Daily Targets — Meetings is on the LEFT to mirror the daily-logs
+              table column order; users entering bulk values build the same
+              left-to-right scan path here as in the grid below. */}
           <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <Label htmlFor="bulk-calls">Daily Calls Target</Label>
-              <Input
-                id="bulk-calls"
-                type="number"
-                min={0}
-                value={targetCalls ?? ""}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  setTargetCalls(
-                    val === "" ? null : Math.max(0, parseInt(val) || 0)
-                  );
-                }}
-                placeholder="0"
-              />
-            </div>
             <div className="space-y-2">
               <Label htmlFor="bulk-meetings">Daily Meetings Target</Label>
               <Input
@@ -481,7 +582,23 @@ export function BulkTargetsDialog({
                 onChange={(e) => {
                   const val = e.target.value;
                   setTargetMeetings(
-                    val === "" ? null : Math.max(0, parseInt(val) || 0)
+                    val === "" ? null : Math.max(0, parseInt(val) || 0),
+                  );
+                }}
+                placeholder="0"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="bulk-calls">Daily Calls Target</Label>
+              <Input
+                id="bulk-calls"
+                type="number"
+                min={0}
+                value={targetCalls ?? ""}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setTargetCalls(
+                    val === "" ? null : Math.max(0, parseInt(val) || 0),
                   );
                 }}
                 placeholder="0"
@@ -511,21 +628,34 @@ export function BulkTargetsDialog({
             </div>
           </div>
 
-          {/* Preview */}
+          {/* Preview \u2014 two-tier so the multi-month math is legible: small
+              breakdown line (months \u00b7 days \u00b7 employees) sits above the headline
+              total. tabular-nums keeps the digits steady as values change. */}
           <div className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5">
-            <div className="flex items-center gap-2 text-sm">
-              <CalendarRange className="h-4 w-4 text-muted-foreground shrink-0" />
-              <span>
-                <span className="font-medium">{workingDayCount}</span> working
-                days{" \u00d7 "}
-                <span className="font-medium">{employeeCount}</span> employee
-                {employeeCount !== 1 ? "s" : ""}
-                {" = "}
-                <span className="font-semibold text-foreground">
-                  {totalEntries}
-                </span>{" "}
-                target entries
-              </span>
+            <div className="flex items-start gap-2.5">
+              <CalendarRange className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
+              <div className="min-w-0 flex-1">
+                <div className="text-xs text-muted-foreground tabular-nums">
+                  <span className="font-medium text-foreground/80">
+                    {monthCount}
+                  </span>{" "}
+                  {monthCount === 1 ? "month" : "months"}
+                  <span className="mx-1.5 text-muted-foreground/40">\u00b7</span>
+                  <span className="font-medium text-foreground/80">
+                    {workingDayCount}
+                  </span>{" "}
+                  working {workingDayCount === 1 ? "day" : "days"}
+                  <span className="mx-1.5 text-muted-foreground/40">\u00b7</span>
+                  <span className="font-medium text-foreground/80">
+                    {employeeCount}
+                  </span>{" "}
+                  {employeeCount === 1 ? "employee" : "employees"}
+                </div>
+                <div className="mt-0.5 text-sm font-semibold text-foreground tabular-nums">
+                  {totalEntries.toLocaleString("en-IN")} target{" "}
+                  {totalEntries === 1 ? "entry" : "entries"}
+                </div>
+              </div>
             </div>
           </div>
         </div>

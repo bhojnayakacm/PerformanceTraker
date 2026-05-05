@@ -115,7 +115,11 @@ export async function saveDailyMetrics(
 
 type BulkSetInput = {
   employee_ids: string[] | null; // null = all active employees
-  month: number;
+  /* Multi-month: each entry is 1..12, all within the same `year`. The dialog
+   * holds a Set client-side and serialises a sorted array on submit; the
+   * server treats the array as the source of truth and validates membership
+   * here so a malformed payload from somewhere else can't poison the loop. */
+  months: number[];
   year: number;
   target_calls: number;
   target_total_meetings: number;
@@ -127,12 +131,19 @@ export async function bulkSetMonthlyTargets(
 ): Promise<ActionResult> {
   const {
     employee_ids,
-    month,
+    months,
     year,
     target_calls,
     target_total_meetings,
     included_weekdays,
   } = input;
+
+  if (!Array.isArray(months) || months.length === 0) {
+    return { error: "Select at least one month" };
+  }
+  if (months.some((m) => !Number.isInteger(m) || m < 1 || m > 12)) {
+    return { error: "Invalid month value" };
+  }
 
   try {
     const supabase = await createClient();
@@ -192,62 +203,79 @@ export async function bulkSetMonthlyTargets(
       }
     }
 
-    // Generate working dates for the month
+    /* Generate working dates across every selected month. Months are
+     * independent — same employee, same target value, same weekday filter,
+     * just different date stamps — so we flatten into a single ordered list
+     * and let the daily_metrics upsert handle them in one logical pass.
+     * `included_weekdays` applies uniformly across months by design (the
+     * "Working Days" toggle is a property of the policy, not the month). */
     const includedSet = new Set(included_weekdays);
-    const daysInMonth = new Date(year, month, 0).getDate();
-    const dates: string[] = [];
+    const allDates: string[] = [];
 
-    for (let d = 1; d <= daysInMonth; d++) {
-      const date = new Date(year, month - 1, d);
-      if (includedSet.has(date.getDay())) {
-        const yyyy = date.getFullYear();
-        const mm = String(date.getMonth() + 1).padStart(2, "0");
-        const dd = String(date.getDate()).padStart(2, "0");
-        dates.push(`${yyyy}-${mm}-${dd}`);
+    for (const month of months) {
+      const daysInMonth = new Date(year, month, 0).getDate();
+      for (let d = 1; d <= daysInMonth; d++) {
+        const date = new Date(year, month - 1, d);
+        if (includedSet.has(date.getDay())) {
+          const yyyy = date.getFullYear();
+          const mm = String(date.getMonth() + 1).padStart(2, "0");
+          const dd = String(date.getDate()).padStart(2, "0");
+          allDates.push(`${yyyy}-${mm}-${dd}`);
+        }
       }
     }
 
-    if (dates.length === 0) {
+    if (allDates.length === 0) {
       return { error: "No working days selected" };
     }
 
-    // Persist the *designated plan* on monthly_targets before writing any
-    // daily rows. This is what the MTD calculator falls back to when an
-    // elapsed working day has no daily_metrics row — without it, a sparsely-
-    // logged month silently under-counts the cumulative target.
-    //
-    // The payload only carries the plan columns: target_total_calls /
-    // target_total_meetings are rollup outputs owned by the
-    // _sync_monthly_from_daily trigger, so we deliberately omit them and
-    // let the trigger rewrite them once the daily_metrics upsert below
-    // fires. Existing rollup values on pre-existing rows are preserved.
-    const planRows = employeeIds.map((empId) => ({
-      employee_id: empId,
-      month,
-      year,
-      daily_target_calls: target_calls,
-      daily_target_total_meetings: target_total_meetings,
-      working_weekdays: included_weekdays,
-    }));
-    {
+    /* Persist the *designated plan* on monthly_targets before writing daily
+     * rows — this is what the MTD calculator falls back to when an elapsed
+     * working day has no daily_metrics row. Without it, a sparsely-logged
+     * month silently under-counts the cumulative target.
+     *
+     * One plan row per (employee × month). target_total_calls /
+     * target_total_meetings are rollup outputs owned by the
+     * _sync_monthly_from_daily trigger, so we deliberately omit them and let
+     * the trigger rewrite them once the daily_metrics upsert below fires.
+     * Existing rollup values on pre-existing rows are preserved.
+     *
+     * 100 employees × 12 months = 1,200 plan rows worst case, well past
+     * comfortable-payload territory for one PostgREST request — same batch
+     * loop as the daily upsert below. */
+    const planRows = employeeIds.flatMap((empId) =>
+      months.map((month) => ({
+        employee_id: empId,
+        month,
+        year,
+        daily_target_calls: target_calls,
+        daily_target_total_meetings: target_total_meetings,
+        working_weekdays: included_weekdays,
+      })),
+    );
+
+    const BATCH_SIZE = 500;
+
+    for (let i = 0; i < planRows.length; i += BATCH_SIZE) {
+      const batch = planRows.slice(i, i + BATCH_SIZE);
       const { error: planError } = await supabase
         .from("monthly_targets")
-        .upsert(planRows, { onConflict: "employee_id,month,year" });
+        .upsert(batch, { onConflict: "employee_id,month,year" });
       if (planError) return { error: planError.message };
     }
 
-    // Build upsert rows (only target columns — existing actuals are preserved)
+    // Build daily upsert rows (only target columns — existing actuals are
+    // preserved). Cross-product of employees × every working date across
+    // every selected month.
     const rows = employeeIds.flatMap((empId) =>
-      dates.map((date) => ({
+      allDates.map((date) => ({
         employee_id: empId,
         date,
         target_calls,
         target_total_meetings,
-      }))
+      })),
     );
 
-    // Upsert in batches to avoid payload size limits
-    const BATCH_SIZE = 500;
     for (let i = 0; i < rows.length; i += BATCH_SIZE) {
       const batch = rows.slice(i, i + BATCH_SIZE);
       const { error } = await supabase
@@ -258,6 +286,7 @@ export async function bulkSetMonthlyTargets(
 
     revalidatePath("/daily-logs");
     revalidatePath("/monthly-data");
+    revalidatePath("/cumulative-data");
     return { success: true };
   } catch (e) {
     return { error: (e as Error).message };
