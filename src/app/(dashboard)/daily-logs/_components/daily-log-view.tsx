@@ -33,7 +33,7 @@ import {
   useTableDnD,
 } from "@/components/data-table/sortable-table";
 import type { Employee, UserRole, DailyMetric } from "@/lib/types";
-import { cn, getInitials, getAvatarColor } from "@/lib/utils";
+import { cn, getInitials, getAvatarColor, formatDoj } from "@/lib/utils";
 import { saveDailyMetrics } from "../actions";
 import { BulkTargetsDialog } from "./bulk-targets-dialog";
 
@@ -502,14 +502,17 @@ export function DailyLogView({
     (activeId: string) => {
       const emp = employeeMap.get(activeId);
       if (!emp) return null;
+      // Subtitle preference: formatted DOJ → emp_id, then optionally append
+      // location. Keeping the fallback explicit (rather than using the raw
+      // emp_id when DOJ is null) means rows with missing HR data still
+      // render usefully instead of going blank.
+      const lead = formatDoj(emp.date_of_joining) ?? emp.emp_id;
       return (
         <RowDragPreview
           initials={getInitials(emp.name)}
           avatarClassName={getAvatarColor(emp.name)}
           name={emp.name}
-          subtitle={
-            emp.location ? `${emp.emp_id} • ${emp.location}` : emp.emp_id
-          }
+          subtitle={emp.location ? `${lead} • ${emp.location}` : lead}
         />
       );
     },
@@ -1022,7 +1025,9 @@ const EmployeeRow = memo(function EmployeeRow({
               {employee.name}
             </div>
             <div className="truncate text-[11px] text-muted-foreground leading-tight">
-              {employee.emp_id}
+              {/* DOJ takes precedence in the subtitle when available — emp_id
+                  is the fallback for back-catalogue records that lack one. */}
+              {formatDoj(employee.date_of_joining) ?? employee.emp_id}
               {employee.location ? (
                 <>
                   <span aria-hidden className="mx-1.5 text-muted-foreground/60">

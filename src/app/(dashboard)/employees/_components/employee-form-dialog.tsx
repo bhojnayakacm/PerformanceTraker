@@ -39,6 +39,7 @@ export function EmployeeFormDialog({ open, onOpenChange, employee }: Props) {
       name: "",
       location: "",
       state: "",
+      date_of_joining: "",
     },
   });
 
@@ -49,6 +50,9 @@ export function EmployeeFormDialog({ open, onOpenChange, employee }: Props) {
         name: employee?.name ?? "",
         location: employee?.location ?? "",
         state: employee?.state ?? "",
+        // Postgres DATE comes back as YYYY-MM-DD; <input type="date">
+        // takes the same shape, so it's a 1:1 hand-off.
+        date_of_joining: employee?.date_of_joining ?? "",
       });
     }
   }, [open, employee, form]);
@@ -152,6 +156,20 @@ export function EmployeeFormDialog({ open, onOpenChange, employee }: Props) {
                 </p>
               )}
             </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="date_of_joining">Date of Joining</Label>
+            <Input
+              id="date_of_joining"
+              type="date"
+              {...form.register("date_of_joining")}
+            />
+            {form.formState.errors.date_of_joining && (
+              <p className="text-sm text-destructive">
+                {form.formState.errors.date_of_joining.message}
+              </p>
+            )}
           </div>
 
           <DialogFooter>

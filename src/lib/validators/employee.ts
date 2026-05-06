@@ -13,6 +13,15 @@ export const employeeCreateSchema = z.object({
     .max(100, "Name must be 100 characters or fewer"),
   location: z.string().trim().max(100).optional().or(z.literal("")),
   state: z.string().trim().max(100).optional().or(z.literal("")),
+  /* The form uses an HTML <input type="date"> which always emits
+   * YYYY-MM-DD, so the validator can be a simple regex (no preprocess).
+   * The CSV path's permissive Indian-format parsing lives in
+   * import-helpers.ts where it belongs. */
+  date_of_joining: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Use the date picker")
+    .optional()
+    .or(z.literal("")),
 });
 
 export const employeeUpdateSchema = employeeCreateSchema.extend({

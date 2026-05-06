@@ -5,7 +5,7 @@ import { ArrowUpDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DRAG_HANDLE_COL_ID } from "@/components/data-table/sortable-table";
 import type { EmployeeMonthlyData } from "@/lib/types";
-import { getInitials, getAvatarColor } from "@/lib/utils";
+import { getInitials, getAvatarColor, formatDoj } from "@/lib/utils";
 import { MetricCell } from "./metric-cell";
 
 const formatCurrency = (n: number) =>
@@ -77,7 +77,10 @@ export function getColumns(isCurrentMonth?: boolean): ColumnDef<EmployeeMonthlyD
       ),
       cell: ({ row }) => {
         const name = row.original.employee.name;
-        const { emp_id, location } = row.original.employee;
+        const { emp_id, location, date_of_joining } = row.original.employee;
+        // DOJ takes the lead spot in the subtitle when present; otherwise we
+        // fall back to the emp_id so rows without HR metadata still render.
+        const lead = formatDoj(date_of_joining) ?? emp_id;
         return (
           <div className="flex items-center gap-3">
             <div
@@ -88,7 +91,7 @@ export function getColumns(isCurrentMonth?: boolean): ColumnDef<EmployeeMonthlyD
             <div className="min-w-0">
               <div className="truncate font-medium leading-tight">{name}</div>
               <div className="truncate text-xs text-muted-foreground leading-tight">
-                {emp_id}
+                {lead}
                 {location ? (
                   <>
                     <span aria-hidden className="mx-1.5 text-muted-foreground/60">

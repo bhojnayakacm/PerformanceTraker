@@ -106,6 +106,7 @@ export type Database = {
       employees: {
         Row: {
           created_at: string
+          date_of_joining: string | null
           emp_id: string
           id: string
           is_active: boolean
@@ -116,6 +117,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          date_of_joining?: string | null
           emp_id: string
           id?: string
           is_active?: boolean
@@ -126,6 +128,7 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          date_of_joining?: string | null
           emp_id?: string
           id?: string
           is_active?: boolean

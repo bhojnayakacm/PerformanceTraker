@@ -87,13 +87,15 @@ const MODULES: ModuleConfig[] = [
     instructions: [
       "Matched by emp_id — existing employees are updated in place.",
       "New emp_ids are inserted as fresh employee records.",
-      "location and state are optional — leave blank if unknown.",
+      "location, state, and date_of_joining are optional — leave blank if unknown.",
+      "date_of_joining accepts dd/mm/yyyy, dd-mm-yyyy, dd.mm.yyyy, or ISO YYYY-MM-DD.",
     ],
     columns: [
       { name: "emp_id", required: true },
       { name: "name", required: true },
       { name: "location", required: false },
       { name: "state", required: false },
+      { name: "date_of_joining", required: false },
     ],
   },
   {

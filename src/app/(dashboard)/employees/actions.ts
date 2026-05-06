@@ -46,6 +46,7 @@ export async function createEmployee(
       name: parsed.data.name,
       location: parsed.data.location || null,
       state: parsed.data.state || null,
+      date_of_joining: parsed.data.date_of_joining || null,
     });
 
     if (error) {
@@ -80,6 +81,7 @@ export async function updateEmployee(
         name: parsed.data.name,
         location: parsed.data.location || null,
         state: parsed.data.state || null,
+        date_of_joining: parsed.data.date_of_joining || null,
       })
       .eq("id", parsed.data.id);
 

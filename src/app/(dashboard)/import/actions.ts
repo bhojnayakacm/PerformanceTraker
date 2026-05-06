@@ -64,7 +64,17 @@ function makeHeaderGate(csvHeaders: string[]) {
 ───────────────────────────────────────────────────────────── */
 
 export async function importEmployees(
-  rows: { emp_id: string; name: string; location?: string; state?: string }[],
+  rows: {
+    emp_id: string;
+    name: string;
+    location?: string;
+    state?: string;
+    /* Already normalised to YYYY-MM-DD by the Zod preprocessor in
+     * import-helpers.ts. The server action stays a thin pass-through —
+     * it does not re-parse, since validateRows() already rejected
+     * malformed dates before they reached the upsert. */
+    date_of_joining?: string;
+  }[],
   csvHeaders: string[],
 ): Promise<ImportResult> {
   try {
@@ -78,6 +88,8 @@ export async function importEmployees(
       };
       if (has("location")) payload.location = row.location?.trim() || null;
       if (has("state")) payload.state = row.state?.trim() || null;
+      if (has("date_of_joining"))
+        payload.date_of_joining = row.date_of_joining?.trim() || null;
       return payload;
     });
 

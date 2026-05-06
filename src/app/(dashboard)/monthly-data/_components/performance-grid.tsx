@@ -33,7 +33,7 @@ import {
   useColumnSizing,
   type SizingColumn,
 } from "@/components/data-table/use-column-sizing";
-import { cn, getAvatarColor, getInitials } from "@/lib/utils";
+import { cn, getAvatarColor, getInitials, formatDoj } from "@/lib/utils";
 import type { EmployeeMonthlyData, UserRole, City } from "@/lib/types";
 import { useDebouncedSearch } from "@/hooks/use-debounced-search";
 import { getColumns } from "./columns";
@@ -156,13 +156,14 @@ export function PerformanceGrid({
     (activeId: string) => {
       const row = rowMap.get(activeId);
       if (!row) return null;
-      const { name, emp_id, location } = row.employee;
+      const { name, emp_id, location, date_of_joining } = row.employee;
+      const lead = formatDoj(date_of_joining) ?? emp_id;
       return (
         <RowDragPreview
           initials={getInitials(name)}
           avatarClassName={getAvatarColor(name)}
           name={name}
-          subtitle={location ? `${emp_id} • ${location}` : emp_id}
+          subtitle={location ? `${lead} • ${location}` : lead}
         />
       );
     },

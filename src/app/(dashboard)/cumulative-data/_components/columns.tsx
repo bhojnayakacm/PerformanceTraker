@@ -4,7 +4,7 @@ import { type ColumnDef } from "@tanstack/react-table";
 import { ArrowUpDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { EmployeeCumulativeData } from "@/lib/types";
-import { getInitials, getAvatarColor } from "@/lib/utils";
+import { getInitials, getAvatarColor, formatDoj } from "@/lib/utils";
 import { CumulativeMetricCell } from "./cumulative-metric-cell";
 
 /** Same achievement-key trick as Monthly Data — rows missing a target
@@ -52,7 +52,10 @@ export function getColumns(): ColumnDef<EmployeeCumulativeData>[] {
         </Button>
       ),
       cell: ({ row }) => {
-        const { name, emp_id, location } = row.original.employee;
+        const { name, emp_id, location, date_of_joining } = row.original.employee;
+        // Same fallback chain as Monthly Data — DOJ takes the lead, emp_id
+        // covers historical employees that don't have one set.
+        const lead = formatDoj(date_of_joining) ?? emp_id;
         return (
           <div className="flex items-center gap-3">
             <div
@@ -63,7 +66,7 @@ export function getColumns(): ColumnDef<EmployeeCumulativeData>[] {
             <div className="min-w-0">
               <div className="truncate font-medium leading-tight">{name}</div>
               <div className="truncate text-xs text-muted-foreground leading-tight">
-                {emp_id}
+                {lead}
                 {location ? (
                   <>
                     <span aria-hidden className="mx-1.5 text-muted-foreground/60">

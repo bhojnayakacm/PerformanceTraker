@@ -35,10 +35,10 @@ export type ParsedData = {
 
 const TEMPLATES: Record<ImportType, { headers: string[]; rows: string[][] }> = {
   employees: {
-    headers: ["emp_id", "name", "location", "state"],
+    headers: ["emp_id", "name", "location", "state", "date_of_joining"],
     rows: [
-      ["ACM01157", "John Doe", "Mumbai", "Maharashtra"],
-      ["ACM01234", "Jane Smith", "Delhi", "Delhi"],
+      ["ACM01157", "John Doe", "Mumbai", "Maharashtra", "15/04/2023"],
+      ["ACM01234", "Jane Smith", "Delhi", "Delhi", ""],
     ],
   },
   targets: {
@@ -245,6 +245,21 @@ const dateField = z.preprocess(
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in YYYY-MM-DD format"),
 );
 
+/* Same parser as `dateField`, but blank cells survive validation and emit
+ * `undefined` so the server-action header gate can decide whether to send
+ * the column or omit it. Used by Employees.date_of_joining where DOJ is
+ * legitimately unknown for back-catalogue records. */
+const optionalDateField = z.preprocess(
+  (val) => {
+    if (val == null || val === "") return undefined;
+    return normalizeDateInput(val);
+  },
+  z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in YYYY-MM-DD format")
+    .optional(),
+);
+
 function normalizeDateInput(val: unknown): unknown {
   if (val == null || val === "") return val;
   const s = String(val).trim();
@@ -303,6 +318,10 @@ const employeeRowSchema = z.object({
   name: z.string().trim().min(2, "Name must be at least 2 characters"),
   location: z.string().trim().optional().or(z.literal("")),
   state: z.string().trim().optional().or(z.literal("")),
+  // Stored as DATE in Postgres; user-facing format is dd/mm/yyyy. The
+  // preprocessor above normalises every supported separator to YYYY-MM-DD
+  // before this validator sees it.
+  date_of_joining: optionalDateField,
 });
 
 // Shared: non-employee bulk imports reference employees by exact `name`,

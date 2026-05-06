@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { DRAG_HANDLE_COL_ID } from "@/components/data-table/sortable-table";
 import type { Employee, UserRole } from "@/lib/types";
-import { getInitials, getAvatarColor } from "@/lib/utils";
+import { getInitials, getAvatarColor, formatDoj } from "@/lib/utils";
 
 type ColumnActions = {
   onEdit: (employee: Employee) => void;
@@ -106,6 +106,28 @@ export function getColumns(
         </Button>
       ),
       cell: ({ row }) => row.getValue("state") || "—",
+    },
+    {
+      accessorKey: "date_of_joining",
+      header: ({ column }) => (
+        <Button
+          variant="ghost"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          className="-ml-3"
+        >
+          Date of Joining
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      ),
+      // Sort uses the raw YYYY-MM-DD string (lexicographic = chronological);
+      // display reformats to dd/mm/yyyy. Defensive `formatDoj` returns null
+      // for malformed input, so we render an em-dash instead of "13/45/...".
+      cell: ({ row }) => {
+        const raw = row.getValue("date_of_joining") as string | null;
+        return (
+          <span className="tabular-nums text-sm">{formatDoj(raw) ?? "—"}</span>
+        );
+      },
     },
     {
       accessorKey: "is_active",

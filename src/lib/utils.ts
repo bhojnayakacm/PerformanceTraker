@@ -35,3 +35,28 @@ export function getAvatarColor(name: string): string {
   }
   return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length]
 }
+
+/* ── Date of Joining formatter ────────────────────────────────────────────
+ * Postgres DATE wires as "YYYY-MM-DD". The UI wants Indian "dd/mm/yyyy".
+ *
+ * String-level reformat ONLY — no `new Date()`. A `new Date("2026-04-15")`
+ * is parsed as UTC midnight and `.getDate()` in IST (+05:30) silently shifts
+ * to "2026-04-14"; that's the same off-by-one trap the import pipeline
+ * already documents. Pulling apart the wire format with a regex bypasses
+ * it entirely.
+ *
+ * Returns null on anything we can't render confidently. Callers fall back
+ * to the emp_id, which is always present.
+ * ────────────────────────────────────────────────────────────────────────── */
+export function formatDoj(value: string | null | undefined): string | null {
+  if (!value) return null
+  const m = value.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (!m) return null
+  const [, y, mo, d] = m
+  const mn = +mo, dn = +d
+  // Defensive cap: the DB CHECK is `date`, not a regex, but a manual SQL
+  // INSERT with a junk string isn't impossible. We'd rather fall back than
+  // render "13/45/2026" and look broken.
+  if (mn < 1 || mn > 12 || dn < 1 || dn > 31) return null
+  return `${d}/${mo}/${y}`
+}
