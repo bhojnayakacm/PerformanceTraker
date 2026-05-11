@@ -244,7 +244,7 @@ export function EmployeeDetailDialog({
   cities,
 }: Props) {
   const [isPending, startTransition] = useTransition();
-  const canEditTargets = userRole === "super_admin" || userRole === "manager";
+  const canEditTargets = userRole === "super_admin" || userRole === "custom_admin";
   const canEdit = userRole !== "viewer";
 
   const form = useForm<MonthlyDataInput>({

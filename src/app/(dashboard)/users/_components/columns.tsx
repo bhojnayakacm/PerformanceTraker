@@ -17,8 +17,8 @@ const ROLE_CONFIG: Record<
     className:
       "bg-violet-100 text-violet-700 border-violet-200/60 dark:bg-violet-900/30 dark:text-violet-400 dark:border-violet-800",
   },
-  manager: {
-    label: "Manager",
+  custom_admin: {
+    label: "Custom Admin",
     className:
       "bg-amber-100 text-amber-700 border-amber-200/60 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-800",
   },
@@ -107,7 +107,7 @@ export function getColumns(
             <Badge variant="secondary" className={config.className}>
               {config.label}
             </Badge>
-            {role === "manager" && row.original.id !== currentUserId && (
+            {role === "custom_admin" && row.original.id !== currentUserId && (
               <Button
                 variant="outline"
                 size="sm"

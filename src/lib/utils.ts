@@ -1,8 +1,60 @@
 import { clsx, type ClassValue } from "clsx"
 import { twMerge } from "tailwind-merge"
+import type { Employee } from "@/lib/types"
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
+}
+
+/* ── Cascading employee search ─────────────────────────────────────────────
+ *
+ * Single-pass O(n) filter: typing "Alice" returns Alice plus every employee
+ * whose `reporting_manager_id` points at Alice. The cascade is one level
+ * deep — that's the contract of the 2-tier hierarchy enforced by migration
+ * 0016 (and its trigger), so we don't need a recursive walk.
+ *
+ * Why two passes:
+ *   1. Find the IDs of every employee whose name/emp_id matches the query.
+ *   2. Build the result by including (a) those direct matches and (b) any
+ *      employee whose reporting_manager_id is in the matched set.
+ *
+ * The two passes share the same employees array — no Map is needed for
+ * lookup because membership in pass 2 is checked against the matched-id Set
+ * (O(1) hits). The original sort order is preserved, so callers don't have
+ * to re-sort after filtering.
+ *
+ * This helper is the single source of truth for the search rule. The
+ * server-side cascading in `getEmployeesForUser` reproduces the same
+ * semantics in SQL (a `.in()` over direct matches plus an IN over their
+ * reports) — keep them in sync if the rule ever evolves.
+ * ────────────────────────────────────────────────────────────────────────── */
+export function filterEmployeesWithReports(
+  employees: Employee[],
+  searchTerm: string,
+): Employee[] {
+  const trimmed = searchTerm.trim().toLowerCase()
+  if (!trimmed) return employees
+
+  // Pass 1: direct text matches against name + emp_id.
+  const matchedIds = new Set<string>()
+  for (const emp of employees) {
+    if (
+      emp.name.toLowerCase().includes(trimmed) ||
+      emp.emp_id.toLowerCase().includes(trimmed)
+    ) {
+      matchedIds.add(emp.id)
+    }
+  }
+
+  if (matchedIds.size === 0) return []
+
+  // Pass 2: include direct matches + employees whose manager is a direct match.
+  return employees.filter(
+    (emp) =>
+      matchedIds.has(emp.id) ||
+      (emp.reporting_manager_id != null &&
+        matchedIds.has(emp.reporting_manager_id)),
+  )
 }
 
 /* ── Initials Avatars ── */

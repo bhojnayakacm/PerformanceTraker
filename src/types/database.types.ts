@@ -112,6 +112,7 @@ export type Database = {
           is_active: boolean
           location: string | null
           name: string
+          reporting_manager_id: string | null
           state: string | null
           updated_at: string
         }
@@ -123,6 +124,7 @@ export type Database = {
           is_active?: boolean
           location?: string | null
           name: string
+          reporting_manager_id?: string | null
           state?: string | null
           updated_at?: string
         }
@@ -134,10 +136,19 @@ export type Database = {
           is_active?: boolean
           location?: string | null
           name?: string
+          reporting_manager_id?: string | null
           state?: string | null
           updated_at?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "employees_reporting_manager_id_fkey"
+            columns: ["reporting_manager_id"]
+            isOneToOne: false
+            referencedRelation: "employees"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       monthly_actuals: {
         Row: {

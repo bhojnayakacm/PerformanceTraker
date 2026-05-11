@@ -35,10 +35,21 @@ export type ParsedData = {
 
 const TEMPLATES: Record<ImportType, { headers: string[]; rows: string[][] }> = {
   employees: {
-    headers: ["emp_id", "name", "location", "state", "date_of_joining"],
+    // Name-centric: `name` is the canonical key for updates (UNIQUE constraint
+    // from 0011). `emp_id` is required only when *creating* a brand-new
+    // employee — leave it blank to update an existing record by name alone.
+    // Manager assignment switched to `reporting_manager_name` to match.
+    headers: [
+      "name",
+      "emp_id",
+      "location",
+      "state",
+      "date_of_joining",
+      "reporting_manager_name",
+    ],
     rows: [
-      ["ACM01157", "John Doe", "Mumbai", "Maharashtra", "15/04/2023"],
-      ["ACM01234", "Jane Smith", "Delhi", "Delhi", ""],
+      ["John Doe", "ACM01157", "Mumbai", "Maharashtra", "15/04/2023", ""],
+      ["Jane Smith", "", "Delhi", "Delhi", "", "John Doe"],
     ],
   },
   targets: {
@@ -314,14 +325,35 @@ function isLeap(y: number): boolean {
 }
 
 const employeeRowSchema = z.object({
-  emp_id: z.string().trim().min(1, "Emp ID is required"),
   name: z.string().trim().min(2, "Name must be at least 2 characters"),
+  /* Name-centric import: emp_id is now optional. The server action picks
+   * the right conflict key — emp_id when present, name otherwise. New
+   * employees still require an emp_id (the column is NOT NULL in the DB);
+   * the server returns a per-row error if a name-only row doesn't match
+   * an existing record. Shape validation here stays permissive. */
+  emp_id: z
+    .string()
+    .trim()
+    .max(20, "Emp ID must be 20 characters or fewer")
+    .optional()
+    .or(z.literal("")),
   location: z.string().trim().optional().or(z.literal("")),
   state: z.string().trim().optional().or(z.literal("")),
   // Stored as DATE in Postgres; user-facing format is dd/mm/yyyy. The
   // preprocessor above normalises every supported separator to YYYY-MM-DD
   // before this validator sees it.
   date_of_joining: optionalDateField,
+  /* CSV references managers by name (the human-friendly handle). Server
+   * action resolves name → employees.id before the FK update. Resolution
+   * failure (unknown manager, or manager who is themselves a junior) is
+   * surfaced as a per-row error in the result panel, not blocked at
+   * parse-time. */
+  reporting_manager_name: z
+    .string()
+    .trim()
+    .max(100, "Manager name must be 100 characters or fewer")
+    .optional()
+    .or(z.literal("")),
 });
 
 // Shared: non-employee bulk imports reference employees by exact `name`,

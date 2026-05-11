@@ -48,4 +48,4 @@ export type EmployeeCumulativeData = {
 
 export type Profile = Tables<"profiles">;
 
-export type UserRole = "super_admin" | "manager" | "editor" | "viewer";
+export type UserRole = "super_admin" | "custom_admin" | "editor" | "viewer";

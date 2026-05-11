@@ -21,7 +21,13 @@ type ColumnActions = {
 
 export function getColumns(
   userRole: UserRole,
-  actions: ColumnActions
+  actions: ColumnActions,
+  /* Resolution map for the Reporting Manager column. Passed in (rather than
+   * derived inside the column) so the parent table can `useMemo` it on the
+   * data array reference — building it inside the cell renderer would rebuild
+   * it on every row, every render. O(n) build → O(1) lookup is the whole
+   * point of doing this client-side instead of a Supabase join. */
+  managerMap: Map<string, Employee>,
 ): ColumnDef<Employee>[] {
   const columns: ColumnDef<Employee>[] = [
     {
@@ -106,6 +112,51 @@ export function getColumns(
         </Button>
       ),
       cell: ({ row }) => row.getValue("state") || "—",
+    },
+    {
+      id: "reporting_manager",
+      // Sort by the resolved manager NAME (not by FK UUID — that would put
+      // employees in a random visual order). Tier-1 rows have no manager,
+      // so they get an empty string and sort to the bottom in ASC.
+      accessorFn: (row) => {
+        if (!row.reporting_manager_id) return "";
+        return managerMap.get(row.reporting_manager_id)?.name ?? "";
+      },
+      header: ({ column }) => (
+        <Button
+          variant="ghost"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          className="-ml-3"
+        >
+          Reporting Manager
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      ),
+      // Two-line cell: name as the lead, emp_id as muted subtext. Matches
+      // the subtitle pattern used in Daily Logs / Monthly Data row identifiers,
+      // so the visual rhythm stays consistent across the app.
+      //
+      // Fallback chain:
+      //   • Null FK (Tier-1)            → em-dash, muted.
+      //   • FK set but lookup miss      → also em-dash. A custom_admin
+      //     viewing the page may have the report in their scope but not the
+      //     senior manager — rather than render a half-broken row, we
+      //     dash it out the same way as a Tier-1.
+      cell: ({ row }) => {
+        const mgrId = row.original.reporting_manager_id;
+        const manager = mgrId ? managerMap.get(mgrId) : null;
+        if (!manager) {
+          return <span className="text-sm text-muted-foreground">—</span>;
+        }
+        return (
+          <div className="flex flex-col leading-tight min-w-0">
+            <span className="text-sm font-medium truncate">{manager.name}</span>
+            <span className="text-[11px] text-muted-foreground tabular-nums truncate">
+              {manager.emp_id}
+            </span>
+          </div>
+        );
+      },
     },
     {
       accessorKey: "date_of_joining",

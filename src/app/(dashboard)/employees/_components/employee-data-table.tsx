@@ -51,27 +51,40 @@ export function EmployeeDataTable({ data, userRole }: Props) {
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [, startTransition] = useTransition();
 
+  // id → Employee resolution map for the Reporting Manager column.
+  // Memoised on the `data` array reference so the O(n) build runs once
+  // per fetch instead of once per cell render.
+  const managerMap = useMemo(() => {
+    const map = new Map<string, Employee>();
+    for (const emp of data) map.set(emp.id, emp);
+    return map;
+  }, [data]);
+
   const columns = useMemo(
     () =>
-      getColumns(userRole, {
-        onEdit: (emp) => {
-          setEditingEmployee(emp);
-          setDialogOpen(true);
+      getColumns(
+        userRole,
+        {
+          onEdit: (emp) => {
+            setEditingEmployee(emp);
+            setDialogOpen(true);
+          },
+          onToggleStatus: (emp) => {
+            startTransition(async () => {
+              const result = await toggleEmployeeStatus(emp.id, emp.is_active);
+              if ("error" in result) {
+                toast.error(result.error);
+              } else {
+                toast.success(
+                  `${emp.name} ${emp.is_active ? "deactivated" : "activated"}`
+                );
+              }
+            });
+          },
         },
-        onToggleStatus: (emp) => {
-          startTransition(async () => {
-            const result = await toggleEmployeeStatus(emp.id, emp.is_active);
-            if ("error" in result) {
-              toast.error(result.error);
-            } else {
-              toast.success(
-                `${emp.name} ${emp.is_active ? "deactivated" : "activated"}`
-              );
-            }
-          });
-        },
-      }),
-    [userRole, startTransition]
+        managerMap,
+      ),
+    [userRole, startTransition, managerMap]
   );
 
   // Stable id-extractor — feeds both useTableDnD and TanStack's getRowId.
@@ -265,6 +278,7 @@ export function EmployeeDataTable({ data, userRole }: Props) {
           if (!open) setEditingEmployee(null);
         }}
         employee={editingEmployee}
+        allEmployees={data}
       />
     </div>
   );

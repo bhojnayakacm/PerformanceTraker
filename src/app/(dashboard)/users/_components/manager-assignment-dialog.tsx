@@ -153,13 +153,13 @@ export function ManagerAssignmentDialog({
       }
 
       toast.success(
-        `Assigned ${selectedIds.size} employee${selectedIds.size !== 1 ? "s" : ""} to ${manager.full_name || "manager"}`
+        `Assigned ${selectedIds.size} employee${selectedIds.size !== 1 ? "s" : ""} to ${manager.full_name || "custom admin"}`
       );
       onOpenChange(false);
     });
   };
 
-  const managerName = manager?.full_name || "Manager";
+  const managerName = manager?.full_name || "Custom Admin";
   const isAllSelected = selectedIds.size === employees.length && employees.length > 0;
 
   return (

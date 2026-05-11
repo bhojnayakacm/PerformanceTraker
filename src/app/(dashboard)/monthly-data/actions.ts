@@ -60,9 +60,9 @@ export async function saveMonthlyData(
       return { error: "You don't have permission to edit data" };
     }
 
-    const canEditTargets = role === "super_admin" || role === "manager";
+    const canEditTargets = role === "super_admin" || role === "custom_admin";
 
-    if (role === "manager") {
+    if (role === "custom_admin") {
       const hasAccess = await assertManagerEmployeeAccess(
         supabase,
         userId,

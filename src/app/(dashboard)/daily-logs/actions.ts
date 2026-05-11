@@ -53,10 +53,10 @@ export async function saveDailyMetrics(
       return { error: "You don't have permission to edit data" };
     }
 
-    const canEditTargets = role === "super_admin" || role === "manager";
+    const canEditTargets = role === "super_admin" || role === "custom_admin";
 
     // If manager, verify access to all employee IDs
-    if (role === "manager") {
+    if (role === "custom_admin") {
       const empIds = entries.map((e) => e.employee_id);
       const hasAccess = await assertManagerEmployeeAccess(
         supabase,
@@ -161,8 +161,8 @@ export async function bulkSetMonthlyTargets(
 
     const role = profile?.role ?? "viewer";
 
-    if (role !== "super_admin" && role !== "manager") {
-      return { error: "Only super admins and managers can set bulk targets" };
+    if (role !== "super_admin" && role !== "custom_admin") {
+      return { error: "Only super admins and custom admins can set bulk targets" };
     }
 
     // Resolve employee IDs
@@ -171,7 +171,7 @@ export async function bulkSetMonthlyTargets(
       employeeIds = employee_ids;
     } else {
       // "All employees" — for manager, scoped to their assignments
-      if (role === "manager") {
+      if (role === "custom_admin") {
         const { data: assignments } = await supabase
           .from("manager_assignments")
           .select("employee_id")
@@ -192,7 +192,7 @@ export async function bulkSetMonthlyTargets(
     }
 
     // If manager with explicit IDs, verify access
-    if (role === "manager" && employee_ids && employee_ids.length > 0) {
+    if (role === "custom_admin" && employee_ids && employee_ids.length > 0) {
       const hasAccess = await assertManagerEmployeeAccess(
         supabase,
         user.id,

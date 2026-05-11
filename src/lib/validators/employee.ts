@@ -22,6 +22,16 @@ export const employeeCreateSchema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Use the date picker")
     .optional()
     .or(z.literal("")),
+  /* Self-FK to a Tier-1 employee — the form passes the picked employee's UUID
+   * (or empty string when the user clears the selection / wants top-level).
+   * Server action coerces empty string to null before the upsert. The strict
+   * 2-tier invariant is enforced by the Postgres trigger from migration 0016,
+   * so we only validate shape here. */
+  reporting_manager_id: z
+    .string()
+    .uuid("Invalid manager selection")
+    .optional()
+    .or(z.literal("")),
 });
 
 export const employeeUpdateSchema = employeeCreateSchema.extend({

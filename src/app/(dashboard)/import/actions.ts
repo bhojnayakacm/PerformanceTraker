@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import type { TablesInsert } from "@/types/database.types";
+import type { TablesInsert, TablesUpdate } from "@/types/database.types";
 
 type ImportResult =
   | {
@@ -65,8 +65,14 @@ function makeHeaderGate(csvHeaders: string[]) {
 
 export async function importEmployees(
   rows: {
-    emp_id: string;
+    /* Required. Globally unique per migration 0011 (employees_name_unique),
+     * which is what makes name a safe upsert key. */
     name: string;
+    /* Optional. When present, takes precedence as the upsert key. Required
+     * only for *creating* new employees — the DB column is NOT NULL, so a
+     * name-only row that doesn't match an existing record is rejected
+     * per-row rather than silently inserted with a placeholder. */
+    emp_id?: string;
     location?: string;
     state?: string;
     /* Already normalised to YYYY-MM-DD by the Zod preprocessor in
@@ -74,6 +80,11 @@ export async function importEmployees(
      * it does not re-parse, since validateRows() already rejected
      * malformed dates before they reached the upsert. */
     date_of_joining?: string;
+    /* Name-keyed manager reference. Server resolves name → employees.id
+     * after phase 1, so managers created earlier in the same CSV become
+     * resolvable for their reports. Resolution failures (unknown name,
+     * or a manager who is themselves a junior) become per-row errors. */
+    reporting_manager_name?: string;
   }[],
   csvHeaders: string[],
 ): Promise<ImportResult> {
@@ -81,29 +92,259 @@ export async function importEmployees(
     const supabase = await assertSuperAdmin();
     const has = makeHeaderGate(csvHeaders);
 
-    const upsertData: TablesInsert<"employees">[] = rows.map((row) => {
-      const payload: TablesInsert<"employees"> = {
-        emp_id: row.emp_id,
-        name: row.name,
-      };
-      if (has("location")) payload.location = row.location?.trim() || null;
-      if (has("state")) payload.state = row.state?.trim() || null;
-      if (has("date_of_joining"))
-        payload.date_of_joining = row.date_of_joining?.trim() || null;
-      return payload;
-    });
+    /* ── Row-identity contract ──────────────────────────────────────────
+     *
+     * For each row we pick the conflict key once and reuse it for every
+     * subsequent operation on that row (phase-2 FK update, error reporting,
+     * the failedRowKeys set). emp_id wins when present so a CSV can correct
+     * a typo in an existing employee's *name* — the row identifier comes
+     * from emp_id, the `name` field in the payload becomes the new value.
+     *
+     * When emp_id is absent, the unique `name` constraint (0011) carries
+     * the load — the row identifier IS the name, and the upsert/update
+     * keys off name. */
+    type RowKey = { col: "emp_id" | "name"; val: string };
+    const rowKey = (r: {
+      emp_id?: string;
+      name: string;
+    }): RowKey => {
+      const e = r.emp_id?.trim();
+      if (e) return { col: "emp_id", val: e };
+      return { col: "name", val: r.name.trim() };
+    };
 
-    const { error } = await supabase
-      .from("employees")
-      .upsert(upsertData, { onConflict: "emp_id" });
+    /* ── Bucket rows by which key they upsert against ──────────────────
+     *
+     * PostgREST's `.upsert(..., { onConflict })` only accepts one conflict
+     * column per call, so a mixed CSV is split into two buckets that run
+     * sequentially. Both buckets share the same partial-payload semantics
+     * via the header gate. */
+    const withEmpId = rows.filter((r) => Boolean(r.emp_id?.trim()));
+    const nameOnly = rows.filter((r) => !r.emp_id?.trim());
 
-    if (error) {
-      return { imported: 0, failed: rows.length, errors: [error.message] };
+    const errors: string[] = [];
+    const failedRowKeys = new Set<string>();
+    const failKey = (k: RowKey) => `${k.col}=${k.val}`;
+
+    /* ── Phase 1a — bulk upsert by emp_id ──
+     *
+     * Bulk because emp_id collisions (the only foreseeable error here) are
+     * already caught at parse-time by the Zod max-length rule, and the DB's
+     * unique constraint is the same shape the upsert is keying on — a
+     * conflicting row updates in place, it doesn't error.
+     *
+     * `reporting_manager_id` is OMITTED from the payload so a blank
+     * `reporting_manager_name` cell with the column-present-in-header path
+     * doesn't clobber an existing FK to NULL. Phase 2 handles that case
+     * explicitly. */
+    if (withEmpId.length > 0) {
+      const payloadA: TablesInsert<"employees">[] = withEmpId.map((row) => {
+        const p: TablesInsert<"employees"> = {
+          emp_id: row.emp_id!.trim(),
+          name: row.name.trim(),
+        };
+        if (has("location")) p.location = row.location?.trim() || null;
+        if (has("state")) p.state = row.state?.trim() || null;
+        if (has("date_of_joining"))
+          p.date_of_joining = row.date_of_joining?.trim() || null;
+        return p;
+      });
+
+      const { error } = await supabase
+        .from("employees")
+        .upsert(payloadA, { onConflict: "emp_id" });
+
+      if (error) {
+        // Bulk upsert is all-or-nothing per PostgREST. We can't attribute
+        // the failure to a single row from here, so the whole bucket is
+        // marked failed; the operator gets the SQLSTATE-rich message and
+        // can fix the offending row in the CSV.
+        errors.push(`Bulk emp_id upsert failed: ${error.message}`);
+        for (const r of withEmpId) failedRowKeys.add(failKey(rowKey(r)));
+      }
+    }
+
+    /* ── Phase 1b — name-keyed updates ──
+     *
+     * Name-only rows MUST already exist in the DB (emp_id is NOT NULL, so
+     * we can't insert without it). We do a single name → id lookup, then
+     * fire per-row UPDATEs. Per-row is mandatory here because the upsert
+     * path would need `emp_id` in the payload, which we don't have.
+     *
+     * Note: we deliberately don't use `.upsert(..., { onConflict: "name" })`
+     * for this bucket. That call would still need a complete row including
+     * `emp_id` for the INSERT case — and the whole point of bucket B is
+     * that emp_id is missing. The INSERT case is an error, not a silent
+     * one. */
+    if (nameOnly.length > 0) {
+      const names = [...new Set(nameOnly.map((r) => r.name.trim()))];
+      const { data: existing, error: lookupError } = await supabase
+        .from("employees")
+        .select("id, name")
+        .in("name", names);
+
+      if (lookupError) {
+        return {
+          imported: 0,
+          failed: rows.length,
+          errors: [...errors, `Name-keyed lookup failed: ${lookupError.message}`],
+        };
+      }
+
+      const nameToId = new Map<string, string>();
+      for (const e of existing ?? []) nameToId.set(e.name, e.id);
+
+      for (const row of nameOnly) {
+        const key = rowKey(row);
+        const id = nameToId.get(row.name.trim());
+        if (!id) {
+          errors.push(
+            `Row "${row.name}": cannot create new employee without emp_id (name-only rows only update existing records)`,
+          );
+          failedRowKeys.add(failKey(key));
+          continue;
+        }
+
+        // TablesUpdate (not TablesInsert) — every column is optional here
+        // because the row already exists; we only patch the fields the
+        // header gate let through. `name` flows through too in case the
+        // caller wants to rename — except the row identifier IS the name
+        // here, so persisting it is a no-op.
+        const u: TablesUpdate<"employees"> = { name: row.name.trim() };
+        if (has("location")) u.location = row.location?.trim() || null;
+        if (has("state")) u.state = row.state?.trim() || null;
+        if (has("date_of_joining"))
+          u.date_of_joining = row.date_of_joining?.trim() || null;
+
+        const { error: updateError } = await supabase
+          .from("employees")
+          .update(u)
+          .eq("id", id);
+        if (updateError) {
+          errors.push(`Row "${row.name}": ${updateError.message}`);
+          failedRowKeys.add(failKey(key));
+        }
+      }
+    }
+
+    /* ── Phase 2 — reporting_manager_name resolution + FK update ──
+     *
+     * Lookup map keys are NAMES this time (the unique constraint from
+     * migration 0011 makes that safe). Rows that failed phase 1 are
+     * skipped — there's no point trying to assign a manager to a row
+     * that didn't land. */
+    let updatedManagerCount = 0;
+    if (has("reporting_manager_name")) {
+      const referencedNames = [
+        ...new Set(
+          rows
+            .map((r) => r.reporting_manager_name?.trim())
+            .filter((s): s is string => Boolean(s)),
+        ),
+      ];
+
+      const managerMap = new Map<
+        string,
+        { id: string; reporting_manager_id: string | null }
+      >();
+      if (referencedNames.length > 0) {
+        const { data: managerRows, error: lookupError } = await supabase
+          .from("employees")
+          .select("id, name, reporting_manager_id")
+          .in("name", referencedNames);
+
+        if (lookupError) {
+          return {
+            imported: rows.length - failedRowKeys.size,
+            failed: failedRowKeys.size,
+            errors: [
+              ...errors,
+              `Failed to resolve reporting managers: ${lookupError.message}`,
+            ],
+          };
+        }
+
+        for (const m of managerRows ?? []) {
+          managerMap.set(m.name, {
+            id: m.id,
+            reporting_manager_id: m.reporting_manager_id,
+          });
+        }
+      }
+
+      for (const row of rows) {
+        const key = rowKey(row);
+        if (failedRowKeys.has(failKey(key))) continue;
+
+        const refName = row.reporting_manager_name?.trim();
+
+        if (!refName) {
+          // Blank cell with header present → promote to Tier-1 (clear FK).
+          const { error: clearError } = await supabase
+            .from("employees")
+            .update({ reporting_manager_id: null })
+            .eq(key.col, key.val);
+          if (clearError) {
+            errors.push(`Row "${row.name}": ${clearError.message}`);
+          }
+          continue;
+        }
+
+        if (refName === row.name.trim()) {
+          errors.push(
+            `Row "${row.name}": cannot set reporting_manager_name to itself`,
+          );
+          continue;
+        }
+
+        const manager = managerMap.get(refName);
+        if (!manager) {
+          errors.push(
+            `Row "${row.name}": reporting_manager_name "${refName}" was not found in the system`,
+          );
+          continue;
+        }
+        if (manager.reporting_manager_id != null) {
+          errors.push(
+            `Row "${row.name}": "${refName}" cannot be a manager (they themselves report to someone — 2-tier limit)`,
+          );
+          continue;
+        }
+
+        const { error: updateError } = await supabase
+          .from("employees")
+          .update({ reporting_manager_id: manager.id })
+          .eq(key.col, key.val);
+
+        if (updateError) {
+          errors.push(`Row "${row.name}": ${updateError.message}`);
+          continue;
+        }
+        updatedManagerCount++;
+      }
     }
 
     revalidatePath("/employees");
     revalidatePath("/import");
-    return { imported: rows.length, failed: 0, errors: [] };
+
+    /* `imported` counts rows whose core record landed (phase 1 success).
+     * Phase-2 manager-resolution failures surface as warnings in `errors`
+     * but don't reduce the imported count — the employee row itself is
+     * present and queryable, the FK assignment can be re-attempted by
+     * uploading a follow-up file with the same name + correct manager. */
+    const noticeBits: string[] = [];
+    if (has("reporting_manager_name")) {
+      noticeBits.push(
+        `Linked ${updatedManagerCount} reporting manager${updatedManagerCount === 1 ? "" : "s"}`,
+      );
+    }
+
+    return {
+      imported: rows.length - failedRowKeys.size,
+      failed: failedRowKeys.size,
+      errors,
+      notices: noticeBits.length > 0 ? noticeBits : undefined,
+    };
   } catch (e) {
     return { error: (e as Error).message };
   }

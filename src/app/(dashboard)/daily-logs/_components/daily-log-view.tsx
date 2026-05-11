@@ -33,7 +33,13 @@ import {
   useTableDnD,
 } from "@/components/data-table/sortable-table";
 import type { Employee, UserRole, DailyMetric } from "@/lib/types";
-import { cn, getInitials, getAvatarColor, formatDoj } from "@/lib/utils";
+import {
+  cn,
+  getInitials,
+  getAvatarColor,
+  formatDoj,
+  filterEmployeesWithReports,
+} from "@/lib/utils";
 import { saveDailyMetrics } from "../actions";
 import { BulkTargetsDialog } from "./bulk-targets-dialog";
 
@@ -351,7 +357,7 @@ export function DailyLogView({
   const searchParams = useSearchParams();
   const [isSaving, startSaveTransition] = useTransition();
   const [isNavigating, startNavigation] = useTransition();
-  const canEditTargets = userRole === "super_admin" || userRole === "manager";
+  const canEditTargets = userRole === "super_admin" || userRole === "custom_admin";
   const canEdit = userRole !== "viewer";
 
   // Two resizable major columns: Employee, and the Meetings+Calls "metrics" block.
@@ -401,15 +407,15 @@ export function DailyLogView({
       getId: getEmpId,
     });
 
-  const filteredEmployees = useMemo(() => {
-    if (!searchFilter) return orderedData;
-    const search = searchFilter.toLowerCase();
-    return orderedData.filter(
-      (emp) =>
-        emp.name.toLowerCase().includes(search) ||
-        emp.emp_id.toLowerCase().includes(search)
-    );
-  }, [orderedData, searchFilter]);
+  // Cascading search: typing a manager's name sweeps in their direct reports
+  // too. Same rule the server applies in getEmployeesForUser, so the search
+  // feels identical across Daily Logs / Monthly Data / Cumulative Data.
+  // The helper preserves orderedData's sequence — drag-persisted ordering
+  // survives a search-then-clear cycle.
+  const filteredEmployees = useMemo(
+    () => filterEmployeesWithReports(orderedData, searchFilter),
+    [orderedData, searchFilter],
+  );
 
   // ── Sortable headers ──
   // Click-toggle: none → asc → desc → none. Sort uses `originalEntries`

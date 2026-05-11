@@ -82,8 +82,8 @@ export async function saveManagerAssignments(
       .eq("id", managerId)
       .single();
 
-    if (targetProfile?.role !== "manager") {
-      return { error: "User is not a manager" };
+    if (targetProfile?.role !== "custom_admin") {
+      return { error: "User is not a custom admin" };
     }
 
     // Delete existing assignments
