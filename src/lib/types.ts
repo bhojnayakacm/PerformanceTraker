@@ -34,9 +34,12 @@ export type CumulativeMetric = {
 };
 
 /** One row of the Cumulative Data view. `numberOfMonths` is the inclusive
- *  count of calendar months in the selected range (used as the divisor for
- *  every monthly-average display in the row). `totalCosting` has no target,
- *  so it stays a bare number rather than a `CumulativeMetric`. */
+ *  count of *elapsed* calendar months in the selected range — the range is
+ *  clamped to the current month, so a "whole fiscal year" filter opened in
+ *  May yields 2, not 12. It's the divisor behind every monthly-average cell,
+ *  and dividing realized actuals by months that haven't happened yet would
+ *  understate performance. `totalCosting` has no target, so it stays a bare
+ *  number rather than a `CumulativeMetric`. */
 export type EmployeeCumulativeData = {
   employee: Employee;
   numberOfMonths: number;

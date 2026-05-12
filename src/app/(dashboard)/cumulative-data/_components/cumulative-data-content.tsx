@@ -73,18 +73,15 @@ async function fetchAllInRange<Row>(
   return out;
 }
 
-/** A (year, month) pair lives inside the user's selected window iff its
- *  ordinal sits within [from, to]. Cheap, branchless, no DST surprises. */
-function inRange(
-  m: number,
-  y: number,
-  fromMonth: number,
-  fromYear: number,
-  toMonth: number,
-  toYear: number,
-) {
+/** Does a (year, month) pair contribute to the roll-up? Only if its ordinal
+ *  sits inside the *present-day-capped* window [fromOrd, maxOrd]. `maxOrd` is
+ *  never the raw user-selected `to` — see the cap computed in
+ *  CumulativeDataContent below — so a row dated next month is silently
+ *  ignored even when the filter's `To` runs into the future. Branchless, no
+ *  DST surprises. */
+function inWindow(m: number, y: number, fromOrd: number, maxOrd: number) {
   const ord = y * 12 + m;
-  return ord >= fromYear * 12 + fromMonth && ord <= toYear * 12 + toMonth;
+  return ord >= fromOrd && ord <= maxOrd;
 }
 
 export async function CumulativeDataContent({
@@ -99,8 +96,39 @@ export async function CumulativeDataContent({
 
   const { supabase, id: userId, role: userRole } = auth;
 
-  const numberOfMonths =
-    (toYear * 12 + toMonth) - (fromYear * 12 + fromMonth) + 1;
+  /* ── Present-day cap ──────────────────────────────────────────────────────
+   *
+   * THE BUG THIS FIXES: managers routinely enter targets months ahead, so a
+   * range whose `To` boundary runs into the future — e.g. "This Fiscal Year"
+   * (Apr → Mar) opened in May — would otherwise sum *twelve* months of targets
+   * against *two* months of actuals. The achievement % craters and the monthly
+   * average gets divided by a denominator the employee couldn't possibly have
+   * reached yet.
+   *
+   * THE FIX: clamp the effective upper boundary to the current calendar month.
+   * Every roll-up below — and `numberOfMonths`, the divisor behind every
+   * monthly-average cell — is computed against `cappedToOrd`, never the raw
+   * user-selected `to`. Past and current months count; future months never do,
+   * regardless of what the URL says.
+   *
+   * Ordinals (year*12 + month) collapse the comparison to one integer test and
+   * sidestep month-wraparound bookkeeping. The cap is *inclusive* of the
+   * current month (Apr + May = 2, matching the bug report's arithmetic). */
+  const now = new Date();
+  const currentOrd = now.getFullYear() * 12 + (now.getMonth() + 1);
+  const fromOrd = fromYear * 12 + fromMonth;
+  const toOrd = toYear * 12 + toMonth;
+  const cappedToOrd = Math.min(toOrd, currentOrd);
+
+  // Entire window in the future ⇒ nothing has elapsed: zero months, zero data.
+  // Math.max keeps the divisor non-negative; CumulativeMetricCell already
+  // treats 0 months as "no data" instead of dividing by it.
+  const numberOfMonths = Math.max(0, cappedToOrd - fromOrd + 1);
+
+  // The bulk fetches over-fetch by *year* and narrow to exact months in JS
+  // (see fetchAllInRange). Pull the upper fetch year back to the current year
+  // too — no point shipping rows for years that lie entirely in the future.
+  const cappedFetchYear = Math.min(toYear, now.getFullYear());
 
   type TargetRow = {
     employee_id: string;
@@ -135,21 +163,21 @@ export async function CumulativeDataContent({
       "monthly_targets",
       "employee_id, month, year, target_client_visits, target_dispatched_sqft",
       fromYear,
-      toYear,
+      cappedFetchYear,
     ),
     fetchAllInRange<ActualRow>(
       supabase,
       "monthly_actuals",
       "employee_id, month, year, actual_client_visits, actual_dispatched_sqft, total_costing",
       fromYear,
-      toYear,
+      cappedFetchYear,
     ),
     fetchAllInRange<TourRow>(
       supabase,
       "monthly_city_tours",
       "employee_id, month, year, target_days, actual_days",
       fromYear,
-      toYear,
+      cappedFetchYear,
     ),
   ]);
 
@@ -169,14 +197,15 @@ export async function CumulativeDataContent({
   const acc = new Map<string, EmployeeCumulativeData>();
   for (const emp of employees) acc.set(emp.id, { ...make(), employee: emp });
 
-  /* The three roll-ups below all share the same boundary-month gate. We
-   * defensively wrap every numeric read in Number(...) || 0 — same lesson
-   * from the MTD pass: PostgREST may serialize NUMERIC/BIGINT columns as
-   * strings, and silent string-concat is what produced the "49 vs 90+"
-   * symptom on Monthly Data. */
+  /* The three roll-ups below all share the same present-day-capped gate
+   * (inWindow): a row whose month hasn't elapsed yet contributes nothing, even
+   * if it sits inside the user's selected `To`. We also defensively wrap every
+   * numeric read in Number(...) || 0 — same lesson from the MTD pass: PostgREST
+   * may serialize NUMERIC/BIGINT columns as strings, and silent string-concat
+   * is what produced the "49 vs 90+" symptom on Monthly Data. */
 
   for (const r of targets) {
-    if (!inRange(r.month, r.year, fromMonth, fromYear, toMonth, toYear)) continue;
+    if (!inWindow(r.month, r.year, fromOrd, cappedToOrd)) continue;
     const row = acc.get(r.employee_id);
     if (!row) continue; // employee out of scope (e.g. inactive / not assigned)
     row.clientVisits.target += Number(r.target_client_visits) || 0;
@@ -184,7 +213,7 @@ export async function CumulativeDataContent({
   }
 
   for (const r of actuals) {
-    if (!inRange(r.month, r.year, fromMonth, fromYear, toMonth, toYear)) continue;
+    if (!inWindow(r.month, r.year, fromOrd, cappedToOrd)) continue;
     const row = acc.get(r.employee_id);
     if (!row) continue;
     row.clientVisits.actual += Number(r.actual_client_visits) || 0;
@@ -193,7 +222,7 @@ export async function CumulativeDataContent({
   }
 
   for (const r of tours) {
-    if (!inRange(r.month, r.year, fromMonth, fromYear, toMonth, toYear)) continue;
+    if (!inWindow(r.month, r.year, fromOrd, cappedToOrd)) continue;
     const row = acc.get(r.employee_id);
     if (!row) continue;
     row.tourDays.target += Number(r.target_days) || 0;
