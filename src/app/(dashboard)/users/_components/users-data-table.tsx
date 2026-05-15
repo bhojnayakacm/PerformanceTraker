@@ -32,7 +32,12 @@ import {
   useTableDnD,
 } from "@/components/data-table/sortable-table";
 import { cn, getAvatarColor, getInitials } from "@/lib/utils";
-import type { Employee, Profile } from "@/lib/types";
+import type {
+  Employee,
+  EmployeeAssignment,
+  Profile,
+  ProfileWithCount,
+} from "@/lib/types";
 import { toggleUserStatus } from "../actions";
 import { getColumns } from "./columns";
 import { ManagerAssignmentDialog } from "./manager-assignment-dialog";
@@ -40,12 +45,18 @@ import { ManagerAssignmentDialog } from "./manager-assignment-dialog";
 const USERS_ORDER_KEY = "users_custom_order";
 
 type Props = {
-  data: Profile[];
+  data: ProfileWithCount[];
   currentUserId: string;
   employees: Employee[];
+  assignments: EmployeeAssignment[];
 };
 
-export function UsersDataTable({ data, currentUserId, employees }: Props) {
+export function UsersDataTable({
+  data,
+  currentUserId,
+  employees,
+  assignments,
+}: Props) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState("");
   const [, startTransition] = useTransition();
@@ -75,10 +86,10 @@ export function UsersDataTable({ data, currentUserId, employees }: Props) {
     [currentUserId, startTransition]
   );
 
-  const getRowId = useCallback((row: Profile) => row.id, []);
+  const getRowId = useCallback((row: ProfileWithCount) => row.id, []);
 
   const { orderedData, rowIds, handleDragEnd, resetOrder, hasCustomOrder } =
-    useTableDnD<Profile>({
+    useTableDnD<ProfileWithCount>({
       data,
       storageKey: USERS_ORDER_KEY,
       getId: getRowId,
@@ -113,7 +124,7 @@ export function UsersDataTable({ data, currentUserId, employees }: Props) {
 
   // O(1) lookup map for the drag overlay.
   const rowMap = useMemo(() => {
-    const map = new Map<string, Profile>();
+    const map = new Map<string, ProfileWithCount>();
     for (const row of orderedData) map.set(row.id, row);
     return map;
   }, [orderedData]);
@@ -255,6 +266,7 @@ export function UsersDataTable({ data, currentUserId, employees }: Props) {
         }}
         manager={assignmentTarget}
         employees={employees}
+        assignments={assignments}
       />
     </div>
   );
@@ -263,7 +275,7 @@ export function UsersDataTable({ data, currentUserId, employees }: Props) {
 /* ── Memoized row ────────────────────────────────────────────────────────── */
 
 type UsersTableRowProps = {
-  row: Row<Profile>;
+  row: Row<ProfileWithCount>;
   disabled: boolean;
 };
 

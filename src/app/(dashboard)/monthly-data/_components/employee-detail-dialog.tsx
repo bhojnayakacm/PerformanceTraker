@@ -22,6 +22,7 @@ import {
   Package,
   Route,
   Target,
+  Trash2,
   Undo2,
   Users2,
   Wallet,
@@ -332,6 +333,29 @@ export function EmployeeDetailDialog({
       );
     },
     []
+  );
+
+  /* Remove a specific card by index. The master "Target Cities" counter is
+   * derived from the new array length inside the same setState callback so the
+   * two values can never desync — `cityTours.length` IS the truth, the form
+   * field just mirrors it. The Zod refine `city_tours.length ===
+   * target_travelling_cities` therefore continues to hold at submit time.
+   *
+   * Numeric badges on the remaining cards (1, 2, 3...) auto-recompute because
+   * they read `index + 1` from .map() — after the filter, indices renumber
+   * naturally. */
+  const removeCityTour = useCallback(
+    (index: number) => {
+      setCityTours((prev) => {
+        const next = prev.filter((_, i) => i !== index);
+        form.setValue("target_travelling_cities", next.length, {
+          shouldValidate: true,
+          shouldDirty: true,
+        });
+        return next;
+      });
+    },
+    [form]
   );
 
   /* ── Submit handler ──
@@ -781,6 +805,7 @@ export function EmployeeDetailDialog({
                               canEditTargets={canEditTargets}
                               canEdit={canEdit}
                               onUpdate={(patch) => updateCityTour(i, patch)}
+                              onRemove={() => removeCityTour(i)}
                             />
                           ))}
                         </div>
@@ -1170,6 +1195,7 @@ function CityBlock({
   canEditTargets,
   canEdit,
   onUpdate,
+  onRemove,
 }: {
   index: number;
   cities: City[];
@@ -1178,6 +1204,7 @@ function CityBlock({
   canEditTargets: boolean;
   canEdit: boolean;
   onUpdate: (patch: Partial<CityTourEntry>) => void;
+  onRemove: () => void;
 }) {
   const selectedCity = useMemo(
     () => cities.find((c) => c.id === tour.city_id) ?? null,
@@ -1200,6 +1227,21 @@ function CityBlock({
             selectedCityName={selectedCity?.name ?? null}
           />
         </div>
+        <button
+          type="button"
+          onClick={onRemove}
+          disabled={!canEditTargets}
+          aria-label={`Remove city block ${index + 1}`}
+          title={canEditTargets ? `Remove city ${index + 1}` : undefined}
+          className={cn(
+            "flex size-8 shrink-0 items-center justify-center rounded-md transition-colors",
+            "text-slate-400 hover:bg-rose-50 hover:text-rose-500",
+            "dark:hover:bg-rose-950/40 dark:hover:text-rose-400",
+            "disabled:pointer-events-none disabled:opacity-30",
+          )}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
       </div>
       <div className="grid grid-cols-2 gap-2 pl-8">
         <div className="space-y-1">

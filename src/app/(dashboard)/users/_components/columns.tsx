@@ -5,7 +5,7 @@ import { ArrowUpDown, UserPlus } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DRAG_HANDLE_COL_ID } from "@/components/data-table/sortable-table";
-import type { Profile } from "@/lib/types";
+import type { Profile, ProfileWithCount } from "@/lib/types";
 import { getInitials, getAvatarColor } from "@/lib/utils";
 
 const ROLE_CONFIG: Record<
@@ -42,7 +42,7 @@ type ColumnActions = {
 export function getColumns(
   currentUserId: string,
   actions: ColumnActions
-): ColumnDef<Profile>[] {
+): ColumnDef<ProfileWithCount>[] {
   return [
     {
       id: DRAG_HANDLE_COL_ID,
@@ -101,13 +101,15 @@ export function getColumns(
       cell: ({ row }) => {
         const role = row.original.role;
         const config = ROLE_CONFIG[role] ?? ROLE_CONFIG.viewer;
+        const showAssignButton =
+          role === "custom_admin" && row.original.id !== currentUserId;
 
         return (
           <div className="flex items-center gap-2">
             <Badge variant="secondary" className={config.className}>
               {config.label}
             </Badge>
-            {role === "custom_admin" && row.original.id !== currentUserId && (
+            {showAssignButton && (
               <Button
                 variant="outline"
                 size="sm"
@@ -124,6 +126,40 @@ export function getColumns(
       filterFn: (row, _columnId, value) => {
         if (value === "all") return true;
         return row.original.role === value;
+      },
+    },
+    {
+      /* Dedicated "Assignments" column — the count gets its own cell rather
+       * than crowding the Role column. Sortable so a Super Admin can rank
+       * Custom Admins by roster size at a glance. Non-custom_admin roles
+       * always render "—": they can't own employees by design, so a numeric
+       * "0" would suggest a zero state that's actually structural. */
+      id: "assignments",
+      accessorFn: (row) => row.assignmentCount,
+      header: ({ column }) => (
+        <Button
+          variant="ghost"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          className="-ml-3"
+        >
+          Assignments
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      ),
+      cell: ({ row }) => {
+        const profile = row.original;
+        if (profile.role !== "custom_admin") {
+          return <span className="text-sm text-muted-foreground">—</span>;
+        }
+        const n = profile.assignmentCount;
+        return (
+          <div className="text-sm tabular-nums">
+            <span className="font-semibold text-slate-900">{n}</span>
+            <span className="ml-1 text-muted-foreground">
+              {n === 1 ? "employee" : "employees"}
+            </span>
+          </div>
+        );
       },
     },
     {

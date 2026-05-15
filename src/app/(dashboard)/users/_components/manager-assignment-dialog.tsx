@@ -9,7 +9,7 @@ import {
   useCallback,
 } from "react";
 import { toast } from "sonner";
-import { Loader2, Check, ChevronsUpDown, Search, X, Users } from "lucide-react";
+import { Loader2, Check, ChevronsUpDown, Search, X, Users, Lock } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -20,15 +20,16 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import type { Employee, Profile } from "@/lib/types";
+import type { Employee, EmployeeAssignment, Profile } from "@/lib/types";
 import { cn, getInitials, getAvatarColor } from "@/lib/utils";
-import { getManagerAssignments, saveManagerAssignments } from "../actions";
+import { saveManagerAssignments } from "../actions";
 
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   manager: Profile | null;
   employees: Employee[];
+  assignments: EmployeeAssignment[];
 };
 
 export function ManagerAssignmentDialog({
@@ -36,25 +37,51 @@ export function ManagerAssignmentDialog({
   onOpenChange,
   manager,
   employees,
+  assignments,
 }: Props) {
   const [isPending, startTransition] = useTransition();
-  const [isLoading, setIsLoading] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [employeeSearch, setEmployeeSearch] = useState("");
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Load current assignments when dialog opens
-  useEffect(() => {
-    if (open && manager) {
-      setIsLoading(true);
-      setEmployeeSearch("");
-      setDropdownOpen(false);
-      getManagerAssignments(manager.id).then((ids) => {
-        setSelectedIds(new Set(ids));
-        setIsLoading(false);
+  /* ── Lock map ─────────────────────────────────────────────────────────────
+   *
+   * Each employee belongs to at most one Custom Admin (UNIQUE(employee_id) in
+   * migration 0017). When this dialog is open for manager X, every employee
+   * already claimed by some manager Y ≠ X must be visually surfaced as locked
+   * with a "Assigned to {Y.name}" hint — the Super Admin should never silently
+   * pull employees from a peer admin's roster.
+   *
+   * The map keys on employee_id; lookups inside the row-render loop are O(1).
+   * Built from the prop, which is loaded server-side at page render, so the
+   * dialog opens instantly with no extra round-trip. */
+  const assignmentByEmployee = useMemo(() => {
+    const map = new Map<string, { managerId: string; managerName: string }>();
+    for (const a of assignments) {
+      map.set(a.employee_id, {
+        managerId: a.manager_id,
+        managerName: a.manager_name,
       });
     }
+    return map;
+  }, [assignments]);
+
+  /* Reset selection only on open/target change. We DO NOT depend on
+   * `assignments` here: re-running mid-edit because the parent re-fetched
+   * would clobber in-progress selections. The disabled-row guard plus the
+   * action's two-delete backstop are the integrity guarantees; the modal's
+   * local state is allowed to be slightly stale within a session. */
+  useEffect(() => {
+    if (!open || !manager) return;
+    setEmployeeSearch("");
+    setDropdownOpen(false);
+    const ids = new Set<string>();
+    for (const a of assignments) {
+      if (a.manager_id === manager.id) ids.add(a.employee_id);
+    }
+    setSelectedIds(ids);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, manager]);
 
   // Click outside closes dropdown
@@ -117,21 +144,43 @@ export function ManagerAssignmentDialog({
     );
   }, [employees, employeeSearch]);
 
-  const toggleEmployee = useCallback((id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
+  /* "Selectable" = employees the Super Admin can actually act on for THIS
+   * manager: unassigned, or already on this manager's roster. Employees
+   * claimed by a peer Custom Admin are excluded — they're rendered in the
+   * list (with the "Assigned to {name}" hint) but cannot be picked or
+   * counted toward the "All" toggle. The counter denominator uses this too,
+   * so "5 of 40 selected" never overpromises a ceiling the user can't hit. */
+  const selectableEmployees = useMemo(() => {
+    if (!manager) return [];
+    return employees.filter((e) => {
+      const claim = assignmentByEmployee.get(e.id);
+      return !claim || claim.managerId === manager.id;
     });
-  }, []);
+  }, [employees, assignmentByEmployee, manager]);
+
+  const toggleEmployee = useCallback(
+    (id: string) => {
+      // Defensive: the disabled button below already prevents this path, but
+      // a stray programmatic call (or a race where claim metadata changed
+      // since render) should never silently promote a locked row.
+      const claim = assignmentByEmployee.get(id);
+      if (claim && manager && claim.managerId !== manager.id) return;
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+      });
+    },
+    [assignmentByEmployee, manager],
+  );
 
   const toggleAll = useCallback(() => {
     setSelectedIds((prev) => {
-      if (prev.size === employees.length) return new Set();
-      return new Set(employees.map((e) => e.id));
+      if (prev.size === selectableEmployees.length) return new Set();
+      return new Set(selectableEmployees.map((e) => e.id));
     });
-  }, [employees]);
+  }, [selectableEmployees]);
 
   const selectedEmployees = useMemo(
     () => employees.filter((e) => selectedIds.has(e.id)),
@@ -160,7 +209,9 @@ export function ManagerAssignmentDialog({
   };
 
   const managerName = manager?.full_name || "Custom Admin";
-  const isAllSelected = selectedIds.size === employees.length && employees.length > 0;
+  const isAllSelected =
+    selectableEmployees.length > 0 &&
+    selectedIds.size === selectableEmployees.length;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -177,16 +228,12 @@ export function ManagerAssignmentDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {isLoading ? (
-          <div className="flex items-center justify-center py-8">
-            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-          </div>
-        ) : (
-          <div className="space-y-4">
+        <div className="space-y-4">
             {/* Employee Multi-Select Combobox */}
             <div className="space-y-2">
               <Label>
-                Employees ({selectedIds.size} of {employees.length} selected)
+                Employees ({selectedIds.size} of {selectableEmployees.length}{" "}
+                selected)
               </Label>
               <div ref={dropdownRef} className="relative">
                 {/* Trigger */}
@@ -213,7 +260,7 @@ export function ManagerAssignmentDialog({
                       Select employees...
                     </span>
                   ) : isAllSelected ? (
-                    <span>All Employees ({employees.length})</span>
+                    <span>All Employees ({selectableEmployees.length})</span>
                   ) : (
                     <div className="flex flex-wrap gap-1 max-h-[120px] overflow-y-auto rounded-md bg-slate-50 dark:bg-slate-900 border border-slate-200/80 dark:border-slate-700/80 shadow-inner p-1.5 w-full">
                       {selectedEmployees.map((emp) => (
@@ -284,7 +331,7 @@ export function ManagerAssignmentDialog({
                       </div>
                       <span className="font-medium">All Employees</span>
                       <span className="ml-auto text-xs text-muted-foreground">
-                        {employees.length}
+                        {selectableEmployees.length}
                       </span>
                     </button>
 
@@ -298,32 +345,66 @@ export function ManagerAssignmentDialog({
                     >
                       {filteredEmployees.map((emp) => {
                         const checked = selectedIds.has(emp.id);
+                        const claim = assignmentByEmployee.get(emp.id);
+                        // Locked when claimed by SOMEONE ELSE. Claimed by the
+                        // current manager? That's their existing assignment
+                        // and stays selectable so it can be unchecked.
+                        const isLocked =
+                          claim != null &&
+                          manager != null &&
+                          claim.managerId !== manager.id;
                         return (
                           <button
                             key={emp.id}
                             type="button"
-                            className="flex w-full items-center gap-2.5 px-3 py-1.5 text-sm hover:bg-muted/50 transition-colors"
+                            disabled={isLocked}
+                            aria-disabled={isLocked || undefined}
+                            title={
+                              isLocked
+                                ? `Assigned to ${claim.managerName}`
+                                : undefined
+                            }
+                            className={cn(
+                              "flex w-full items-center gap-2.5 px-3 py-1.5 text-sm transition-colors",
+                              isLocked
+                                ? "cursor-not-allowed opacity-60"
+                                : "hover:bg-muted/50"
+                            )}
                             onClick={(e) => {
                               e.stopPropagation();
+                              if (isLocked) return;
                               toggleEmployee(emp.id);
                             }}
                           >
                             <div
                               className={cn(
                                 "flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border transition-colors",
-                                checked
-                                  ? "bg-primary border-primary text-primary-foreground"
-                                  : "border-input"
+                                isLocked
+                                  ? "border-slate-200 bg-slate-100"
+                                  : checked
+                                    ? "bg-primary border-primary text-primary-foreground"
+                                    : "border-input"
                               )}
                             >
-                              {checked && <Check className="h-3 w-3" />}
+                              {isLocked ? (
+                                <Lock className="h-2.5 w-2.5 text-slate-400" />
+                              ) : (
+                                checked && <Check className="h-3 w-3" />
+                              )}
                             </div>
                             <div
                               className={`flex size-5 shrink-0 items-center justify-center rounded-full text-[8px] font-semibold ${getAvatarColor(emp.name)}`}
                             >
                               {getInitials(emp.name)}
                             </div>
-                            <span className="truncate">{emp.name}</span>
+                            <div className="flex min-w-0 flex-1 flex-col items-start text-left leading-tight">
+                              <span className="w-full truncate">{emp.name}</span>
+                              {isLocked && claim && (
+                                <span className="w-full truncate text-[10px] text-muted-foreground">
+                                  Assigned to {claim.managerName}
+                                </span>
+                              )}
+                            </div>
                             <span className="ml-auto text-xs text-muted-foreground shrink-0">
                               {emp.emp_id}
                             </span>
@@ -355,8 +436,7 @@ export function ManagerAssignmentDialog({
                 )}
               </div>
             </div>
-          </div>
-        )}
+        </div>
 
         <DialogFooter>
           <Button
@@ -368,7 +448,7 @@ export function ManagerAssignmentDialog({
           </Button>
           <Button
             onClick={handleSave}
-            disabled={isPending || isLoading}
+            disabled={isPending}
           >
             {isPending ? (
               <>

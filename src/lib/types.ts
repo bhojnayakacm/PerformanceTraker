@@ -51,4 +51,24 @@ export type EmployeeCumulativeData = {
 
 export type Profile = Tables<"profiles">;
 
+/** Profile enriched with the count of `manager_assignments` rows pointing at
+ *  it (i.e. how many employees this user is responsible for as a Custom
+ *  Admin). Always 0 for non-custom_admin roles. Populated by the User
+ *  Management page only; the bare `Profile` type remains the canonical wire
+ *  representation everywhere else. */
+export type ProfileWithCount = Profile & {
+  assignmentCount: number;
+};
+
+/** A single (employee → Custom Admin) claim, joined with the manager's
+ *  display name for use in UI hints. Threaded through the Users page so the
+ *  assignment dialog can lock employees already owned by a different Custom
+ *  Admin and surface a "Assigned to {name}" affordance, preventing silent
+ *  reassignment at the source. */
+export type EmployeeAssignment = {
+  employee_id: string;
+  manager_id: string;
+  manager_name: string;
+};
+
 export type UserRole = "super_admin" | "custom_admin" | "editor" | "viewer";

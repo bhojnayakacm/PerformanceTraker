@@ -121,14 +121,50 @@ export async function saveMonthlyData(
 
     if (actualError) return { error: actualError.message };
 
-    // ── Diff monthly_city_tours (delete-then-insert is cleanest for small sets) ──
-    const { error: deleteError } = await supabase
+    /* ── Diff monthly_city_tours ──────────────────────────────────────────
+     *
+     * The dialog now lets a Super Admin remove an individual card (not just
+     * trim the tail via the master "Target Cities" counter), so the submitted
+     * set is no longer guaranteed to be a prefix of the persisted set. We
+     * sync via the recommended diff pattern:
+     *
+     *   (1) DELETE rows whose city_id is NOT in the submitted set. This is
+     *       the orphan-removal step — a city removed in the UI maps to a row
+     *       deleted here. When the user removed every card, the NOT IN
+     *       predicate is dropped and all existing rows for the period go.
+     *
+     *   (2) UPSERT the submitted set onto UNIQUE(employee_id, month, year,
+     *       city_id). New cities are inserted; cities the user kept have
+     *       their target_days/actual_days refreshed in place, preserving the
+     *       row id and created_at.
+     *
+     * Compared with the old "DELETE all + INSERT all" approach this:
+     *   - preserves DB row identity for unchanged cities (no churn),
+     *   - shrinks the partial-failure blast radius — if the upsert errors,
+     *     the kept rows still exist instead of being collateral damage from
+     *     the wholesale delete.
+     * ────────────────────────────────────────────────────────────────── */
+
+    const submittedCityIds = data.city_tours.map((t) => t.city_id);
+
+    let deleteQuery = supabase
       .from("monthly_city_tours")
       .delete()
       .eq("employee_id", employeeId)
       .eq("month", month)
       .eq("year", year);
 
+    if (submittedCityIds.length > 0) {
+      // PostgREST `not.in.(…)` filter. Zod already validated each entry as a
+      // UUID upstream, so inlining without quoting is safe.
+      deleteQuery = deleteQuery.not(
+        "city_id",
+        "in",
+        `(${submittedCityIds.join(",")})`,
+      );
+    }
+
+    const { error: deleteError } = await deleteQuery;
     if (deleteError) return { error: deleteError.message };
 
     if (data.city_tours.length > 0) {
@@ -141,11 +177,11 @@ export async function saveMonthlyData(
         actual_days: t.actual_days,
       }));
 
-      const { error: insertError } = await supabase
+      const { error: upsertError } = await supabase
         .from("monthly_city_tours")
-        .insert(rows);
+        .upsert(rows, { onConflict: "employee_id,month,year,city_id" });
 
-      if (insertError) return { error: insertError.message };
+      if (upsertError) return { error: upsertError.message };
     }
 
     revalidatePath("/monthly-data");
