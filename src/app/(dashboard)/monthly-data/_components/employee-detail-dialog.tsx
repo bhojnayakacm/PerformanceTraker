@@ -74,6 +74,17 @@ const NUM_INPUT_PROPS = {
   },
 } as const;
 
+/* Travelling-city day fields accept half-day granularity. monthly_city_tours
+ * stores target_days/actual_days as NUMERIC(5,2) since migration 0012, but
+ * the HTML5 <input type="number"> step defaults to 1 — typing 0.5 then
+ * submitting triggers "Please enter a valid value. The two nearest valid
+ * values are 0 and 1." Setting step explicitly fixes the validator.
+ *
+ * Use 0.5 (not "any") so the up/down spinners and validation still enforce
+ * half-day business semantics; a stray 0.37 here would be a data-entry bug,
+ * not a feature. */
+const DAY_INPUT_PROPS = { ...NUM_INPUT_PROPS, step: 0.5 } as const;
+
 /* ────────────────────────────────────────────────────────────────
    Color tints — literal class strings for Tailwind JIT.
    Only 3 tints now (one per pillar).
@@ -256,6 +267,36 @@ export function EmployeeDetailDialog({
   const [cityTours, setCityTours] = useState<CityTourEntry[]>(
     getInitialCityTours(data)
   );
+
+  /* Deferred body mount.
+   *
+   * The Performance pillar owns ~30+ controlled inputs, nested CitySelect
+   * popovers, several form.watch() subscriptions, and live useMemo roll-ups.
+   * Mounting all of that synchronously *during* Radix Dialog's open transform
+   * drops frames — the row click visibly stutters before the dialog settles.
+   *
+   * Fix: gate the heavy body behind a `bodyReady` flag that flips true ~150ms
+   * after `open` toggles on. While false we render a lightweight skeleton at
+   * the same column-span widths, so the dialog can render the header and the
+   * three card outlines on the very first paint, then commit the form once
+   * the open animation has visibly settled. 150ms is the visual sweet spot:
+   * the transform completes (Radix uses ~180-200ms), the skeleton holds
+   * layout, and the inputs flash in without competing for paint budget.
+   *
+   * Form hooks (useForm, cityTours, watches) all live above this flag, so
+   * the form's *state* exists immediately — only the *DOM tree* is deferred.
+   * That keeps the watch subscriptions hot and the cityTours reset effect
+   * running in the right order; only the cost of rendering inputs is moved. */
+  const [bodyReady, setBodyReady] = useState(false);
+
+  useEffect(() => {
+    if (!open) {
+      setBodyReady(false);
+      return;
+    }
+    const id = window.setTimeout(() => setBodyReady(true), 150);
+    return () => window.clearTimeout(id);
+  }, [open]);
 
   useEffect(() => {
     if (data) {
@@ -525,6 +566,9 @@ export function EmployeeDetailDialog({
 
             {/* ══════════════ SCROLLABLE BODY — 3 PILLARS ══════════════ */}
             <div className="flex-1 min-h-0 overflow-y-auto px-6 py-5 bg-muted/20">
+              {!bodyReady ? (
+                <DialogBodySkeleton />
+              ) : (
               <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-start">
                 {/* ─── PILLAR 1: Meetings & Calls (left, compact) ─── */}
                 <SectionCard
@@ -891,6 +935,7 @@ export function EmployeeDetailDialog({
                   </div>
                 </SectionCard>
               </div>
+              )}
             </div>
 
             {/* ══════════════ FOOTER ══════════════ */}
@@ -927,6 +972,23 @@ export function EmployeeDetailDialog({
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════
+   DialogBodySkeleton — held in front of the heavy form tree during the
+   Radix Dialog open animation. Matches the column-spans of the real grid
+   (3 / 6 / 3) and the per-pillar tints so the transition into the actual
+   content is positional and chromatic, not just structural.
+   ════════════════════════════════════════════════════════════════ */
+
+function DialogBodySkeleton() {
+  return (
+    <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-start">
+      <div className="xl:col-span-3 h-64 rounded-2xl border border-slate-200/70 bg-slate-50/40 dark:border-slate-800/60 dark:bg-slate-900/30 animate-pulse" />
+      <div className="xl:col-span-6 h-[28rem] rounded-2xl border border-indigo-200/60 bg-indigo-50/30 dark:border-indigo-900/40 dark:bg-indigo-950/25 animate-pulse" />
+      <div className="xl:col-span-3 h-64 rounded-2xl border border-rose-200/60 bg-rose-50/30 dark:border-rose-900/40 dark:bg-rose-950/25 animate-pulse" />
+    </div>
   );
 }
 
@@ -1250,7 +1312,7 @@ function CityBlock({
           </Label>
           <Input
             type="number"
-            {...NUM_INPUT_PROPS}
+            {...DAY_INPUT_PROPS}
             value={tour.target_days}
             onChange={(e) =>
               onUpdate({
@@ -1267,7 +1329,7 @@ function CityBlock({
           </Label>
           <Input
             type="number"
-            {...NUM_INPUT_PROPS}
+            {...DAY_INPUT_PROPS}
             value={tour.actual_days}
             onChange={(e) =>
               onUpdate({
