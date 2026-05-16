@@ -141,4 +141,20 @@
   html {
     @apply font-sans;
   }
+
+  /* Hide native <input type="number"> spinner arrows. They invite misclicks
+   * on dense grids (Daily Logs, City Tours), and every numeric field in the
+   * app already has explicit min/max + Zod validation, so the spinners only
+   * carry visual noise. Pairs with the onWheel blur in <Input> — together
+   * they eliminate both vectors for accidental value changes (scroll-step
+   * and spinner-misclick). */
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type="number"] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
 }
