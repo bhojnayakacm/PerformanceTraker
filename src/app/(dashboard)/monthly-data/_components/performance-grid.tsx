@@ -51,6 +51,12 @@ type Props = {
   year: number;
   isCurrentMonth?: boolean;
   cities: City[];
+  /** True while TanStack Query is fetching a new result for the current
+   *  queryKey (filter change, manual invalidate, background refresh).
+   *  Combined with `isPending` from useDebouncedSearch into a single
+   *  "something is loading" signal that dims the table and surfaces a
+   *  spinner in the toolbar. */
+  isFetching?: boolean;
 };
 
 export function PerformanceGrid({
@@ -60,9 +66,15 @@ export function PerformanceGrid({
   year,
   isCurrentMonth,
   cities,
+  isFetching = false,
 }: Props) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const { inputValue, setInputValue, isPending } = useDebouncedSearch("query", 300);
+  // Single loading signal. `isPending` fires during the 300ms debounce +
+  // router transition for search; `isFetching` fires during the actual
+  // Supabase round-trip for any filter change. Either one means "table
+  // contents are about to update" — same UX treatment.
+  const showOverlay = isFetching || isPending;
   const [detailOpen, setDetailOpen] = useState(false);
   const [selectedRow, setSelectedRow] = useState<EmployeeMonthlyData | null>(
     null
@@ -187,6 +199,13 @@ export function PerformanceGrid({
           )}
         </div>
         <div className="flex items-center gap-2">
+          {/* Non-debounce loading badge — covers month change cache miss,
+           *  manual invalidate, background refresh. Hidden when isPending
+           *  is already firing (the search input has its own internal
+           *  spinner in that case, so doubling up would be visual noise). */}
+          {isFetching && !isPending && (
+            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+          )}
           {userRole === "super_admin" && (
             <Button
               variant="outline"
@@ -208,7 +227,7 @@ export function PerformanceGrid({
       </div>
 
       {/* Table */}
-      <Card className={cn("flex-1 min-h-0 flex flex-col border-0 py-0 gap-0 rounded-2xl bg-white ring-1 ring-slate-200 shadow-[0_4px_24px_-12px_rgba(79,70,229,0.12)] overflow-hidden transition-all duration-200 hover:shadow-[0_6px_28px_-10px_rgba(79,70,229,0.18)]", isPending && "opacity-60 pointer-events-none")}>
+      <Card className={cn("flex-1 min-h-0 flex flex-col border-0 py-0 gap-0 rounded-2xl bg-white ring-1 ring-slate-200 shadow-[0_4px_24px_-12px_rgba(79,70,229,0.12)] overflow-hidden transition-all duration-200 hover:shadow-[0_6px_28px_-10px_rgba(79,70,229,0.18)]", showOverlay && "opacity-60 pointer-events-none")}>
         <CardContent className="flex-1 min-h-0 flex flex-col p-0">
           <div className="flex-1 min-h-0 overflow-auto">
             <DndTableProvider

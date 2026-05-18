@@ -1,5 +1,6 @@
 "use client";
 
+import { useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -48,6 +49,11 @@ export function MonthSelector({
 }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  // Wrap router.push so React holds the old UI during the RSC fetch
+  // instead of freezing the click handler. Pairs with TanStack Query's
+  // placeholderData on the consuming grid — the table dims while the
+  // new month resolves, never flashes a skeleton.
+  const [, startTransition] = useTransition();
 
   const navigate = (m: number, y: number) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -60,7 +66,9 @@ export function MonthSelector({
         else params.delete(k);
       }
     }
-    router.push(`${basePath}?${params.toString()}`);
+    startTransition(() => {
+      router.push(`${basePath}?${params.toString()}`);
+    });
   };
 
   const goPrev = () => {

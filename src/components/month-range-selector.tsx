@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { CalendarRange, Check, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -104,6 +104,10 @@ export function MonthRangeSelector({
   const router = useRouter();
   const searchParams = useSearchParams();
   const [open, setOpen] = useState(false);
+  // Wrap router.push so React holds the old UI through the RSC fetch.
+  // Pairs with the consuming grid's TanStack Query placeholderData for
+  // a no-skeleton-flash range change.
+  const [, startTransition] = useTransition();
 
   // Draft state — local to the popover. Reset to the applied range each
   // time the popover opens so a "Cancel" really does discard.
@@ -143,7 +147,9 @@ export function MonthRangeSelector({
         else params.delete(k);
       }
     }
-    router.push(`${basePath}?${params.toString()}`);
+    startTransition(() => {
+      router.push(`${basePath}?${params.toString()}`);
+    });
     setOpen(false);
   };
 

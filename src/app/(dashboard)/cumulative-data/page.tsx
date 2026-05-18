@@ -1,9 +1,21 @@
 import { Suspense } from "react";
-import { CumulativeDataContent } from "./_components/cumulative-data-content";
+import { redirect } from "next/navigation";
+import { dehydrate, HydrationBoundary } from "@tanstack/react-query";
+import { getAuthUser } from "@/lib/queries/auth";
+import { getQueryClient } from "@/lib/query-client";
+import {
+  employeesQueryKey,
+  fetchEmployees,
+} from "@/lib/queries/employees-query";
+import {
+  fetchCumulativeMetrics,
+  cumulativeMetricsQueryKey,
+} from "./_lib/fetch-cumulative-metrics";
+import { CumulativeGridContainer } from "./_components/cumulative-grid-container";
 import { CumulativeDataSkeleton } from "./_components/cumulative-data-skeleton";
 
 /** Default range: the current Indian fiscal year (Apr → Mar). When the
- *  user lands on the page without URL params, we want a meaningful YTD
+ *  user lands on the page without URL params we want a meaningful YTD
  *  view rather than an empty single month. */
 function defaultFY(now: Date) {
   const y = now.getFullYear();
@@ -17,9 +29,6 @@ function defaultFY(now: Date) {
   };
 }
 
-/** Clamp the URL-provided range to a valid window: every value finite, and
- *  to ≥ from. If the user ever lands on an inverted/garbage range we fall
- *  back to the default rather than blowing up the server query. */
 function parseRange(params: {
   fromMonth?: string;
   fromYear?: string;
@@ -69,14 +78,12 @@ export default async function CumulativeDataPage({
         </p>
       </div>
 
-      {/* Suspense key on the full range so any boundary change shows a
-          skeleton; search changes use startTransition (old UI stays). */}
+      {/* No `key` on Suspense — filter changes must NOT unmount the table,
+       *  otherwise `placeholderData: keepPreviousData` has nothing to fall
+       *  back to and the user sees a fresh skeleton on every interaction. */}
       <div className="flex min-h-0 flex-1 flex-col">
-        <Suspense
-          key={`${fromMonth}-${fromYear}-${toMonth}-${toYear}`}
-          fallback={<CumulativeDataSkeleton />}
-        >
-          <CumulativeDataContent
+        <Suspense fallback={<CumulativeDataSkeleton />}>
+          <CumulativeDataLoader
             fromMonth={fromMonth}
             fromYear={fromYear}
             toMonth={toMonth}
@@ -86,5 +93,64 @@ export default async function CumulativeDataPage({
         </Suspense>
       </div>
     </div>
+  );
+}
+
+/**
+ * Prefetches BOTH the search-keyed employees query AND the
+ * (range)-keyed metrics query in parallel — same split as Monthly Data.
+ * Search keystrokes refetch only employees; range changes refetch only
+ * metrics. Backtracks become 0 ms cache hits.
+ */
+async function CumulativeDataLoader({
+  fromMonth,
+  fromYear,
+  toMonth,
+  toYear,
+  query,
+}: {
+  fromMonth: number;
+  fromYear: number;
+  toMonth: number;
+  toYear: number;
+  query: string;
+}) {
+  const auth = await getAuthUser();
+  if (!auth) redirect("/login");
+
+  const employeesParams = { query, userId: auth.id, userRole: auth.role };
+  const metricsParams = {
+    fromMonth,
+    fromYear,
+    toMonth,
+    toYear,
+    userId: auth.id,
+    userRole: auth.role,
+  };
+
+  const queryClient = getQueryClient();
+  await Promise.all([
+    queryClient.prefetchQuery({
+      queryKey: employeesQueryKey(employeesParams),
+      queryFn: () => fetchEmployees(auth.supabase, employeesParams),
+    }),
+    queryClient.prefetchQuery({
+      queryKey: cumulativeMetricsQueryKey(metricsParams),
+      queryFn: () => fetchCumulativeMetrics(auth.supabase, metricsParams),
+    }),
+  ]);
+
+  return (
+    <HydrationBoundary state={dehydrate(queryClient)}>
+      <CumulativeGridContainer
+        fromMonth={fromMonth}
+        fromYear={fromYear}
+        toMonth={toMonth}
+        toYear={toYear}
+        query={query}
+        userId={auth.id}
+        userRole={auth.role}
+      />
+    </HydrationBoundary>
   );
 }

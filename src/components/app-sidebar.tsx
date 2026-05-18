@@ -1,8 +1,32 @@
 "use client";
 
-import { useState, useEffect } from "react";
+/**
+ * Sidebar with hover-debounced TanStack Query prefetch.
+ *
+ *   • Next.js `<Link prefetch={true}>` handles the RSC prefetch — all
+ *     dashboard routes are eagerly prefetched on viewport intersect, so
+ *     `loading.tsx` streams instantly upon click and the page's server
+ *     prefetch (its `prefetchQuery` + `dehydrate(queryClient)`) is
+ *     bundled into that RSC payload.
+ *   • The `onMouseEnter`/`onFocus` handler below ADDS a 150 ms-debounced
+ *     direct prefetch into the browser `queryClient`. This is redundant
+ *     with the RSC prefetch in the common case but rescues two corners:
+ *       (a) RSC prefetches eventually age out of Next.js's cache.
+ *       (b) The user lingered on the current page past our 30 s
+ *           staleTime, so the previously-warm entries are now stale.
+ *     In both cases a 150 ms hover re-warms the cache directly, so the
+ *     subsequent click hydrates synchronously with no skeleton flash.
+ *
+ * Why 150 ms: filters out incidental mouse-through events (cursor crossing
+ * the sidebar to reach the main content) while still firing comfortably
+ * before any deliberate click. Repeat hovers within 30 s are no-ops —
+ * `prefetchQuery` skips when the cached entry is still fresh.
+ */
+
+import { useState, useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   LayoutDashboard,
   Users,
@@ -25,6 +49,9 @@ import {
   SidebarMenuItem,
   SidebarRail,
 } from "@/components/ui/sidebar";
+import { createClient } from "@/lib/supabase/client";
+import { prefetchRoute } from "@/lib/queries/prefetch-route";
+import type { UserRole } from "@/lib/types";
 
 const navItems = [
   { title: "Dashboard", href: "/", icon: LayoutDashboard },
@@ -37,10 +64,51 @@ const navItems = [
   { title: "Reports", href: "/reports", icon: BarChart3 },
 ];
 
-export function AppSidebar() {
+const HOVER_DEBOUNCE_MS = 150;
+
+type Props = {
+  userId: string;
+  userRole: UserRole;
+};
+
+export function AppSidebar({ userId, userRole }: Props) {
   const pathname = usePathname();
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+
+  const queryClient = useQueryClient();
+  // Memoized so the same browser client is reused across hovers — keeps
+  // Supabase's internal session/auth listeners stable rather than spinning
+  // up a new pool every time the user grazes the sidebar.
+  const supabase = useMemo(() => createClient(), []);
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const cancelHover = () => {
+    if (hoverTimer.current !== null) {
+      clearTimeout(hoverTimer.current);
+      hoverTimer.current = null;
+    }
+  };
+
+  const scheduleHover = (href: string) => {
+    cancelHover();
+    hoverTimer.current = setTimeout(() => {
+      prefetchRoute(queryClient, href, { supabase, userId, userRole });
+      hoverTimer.current = null;
+    }, HOVER_DEBOUNCE_MS);
+  };
+
+  // Guard against a pending timer outliving the component (e.g. layout
+  // teardown on logout). Without this, a fire-after-unmount would still
+  // run prefetchRoute against a queryClient nobody listens to.
+  useEffect(() => {
+    return () => {
+      if (hoverTimer.current !== null) {
+        clearTimeout(hoverTimer.current);
+        hoverTimer.current = null;
+      }
+    };
+  }, []);
 
   return (
     <Sidebar collapsible="icon">
@@ -78,7 +146,16 @@ export function AppSidebar() {
                 return (
                   <SidebarMenuItem key={item.href}>
                     <SidebarMenuButton
-                      render={<Link href={item.href} prefetch={true} />}
+                      render={
+                        <Link
+                          href={item.href}
+                          prefetch={true}
+                          onMouseEnter={() => scheduleHover(item.href)}
+                          onMouseLeave={cancelHover}
+                          onFocus={() => scheduleHover(item.href)}
+                          onBlur={cancelHover}
+                        />
+                      }
                       tooltip={mounted ? item.title : undefined}
                       isActive={isActive}
                       className="relative h-9 gap-3 text-[13px] text-slate-600 transition-all duration-200 ease-out hover:bg-indigo-50/60 hover:text-slate-900 data-active:bg-indigo-50 data-active:text-indigo-700 data-active:hover:bg-indigo-50 data-active:hover:text-indigo-700 data-active:before:content-[''] data-active:before:absolute data-active:before:inset-y-0 data-active:before:left-0 data-active:before:w-[3px] data-active:before:bg-indigo-600"

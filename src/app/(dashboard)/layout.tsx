@@ -3,6 +3,8 @@ import { createClient } from "@/lib/supabase/server";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { AppHeader } from "@/components/app-header";
+import { QueryProvider } from "@/components/providers/query-provider";
+import type { UserRole } from "@/lib/types";
 
 export default async function DashboardLayout({
   children,
@@ -26,17 +28,19 @@ export default async function DashboardLayout({
     .single();
 
   const userName = profile?.full_name ?? user.email ?? "User";
-  const userRole = profile?.role ?? "viewer";
+  const userRole = (profile?.role ?? "viewer") as UserRole;
 
   return (
-    <SidebarProvider className="h-svh overflow-hidden">
-      <AppSidebar />
-      <SidebarInset className="min-w-0 min-h-0 overflow-hidden bg-slate-50">
-        <AppHeader userName={userName} userRole={userRole} />
-        <main className="flex-1 min-h-0 min-w-0 overflow-y-auto bg-slate-50 p-6">
-          {children}
-        </main>
-      </SidebarInset>
-    </SidebarProvider>
+    <QueryProvider>
+      <SidebarProvider className="h-svh overflow-hidden">
+        <AppSidebar userId={user.id} userRole={userRole} />
+        <SidebarInset className="min-w-0 min-h-0 overflow-hidden bg-slate-50">
+          <AppHeader userName={userName} userRole={userRole} />
+          <main className="flex-1 min-h-0 min-w-0 overflow-y-auto bg-slate-50 p-6">
+            {children}
+          </main>
+        </SidebarInset>
+      </SidebarProvider>
+    </QueryProvider>
   );
 }

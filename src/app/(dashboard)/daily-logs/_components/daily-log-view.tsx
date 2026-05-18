@@ -1,13 +1,11 @@
 "use client";
 
 import { useState, useEffect, useTransition, useCallback, useMemo, useRef, memo } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useDebouncedSearch } from "@/hooks/use-debounced-search";
 import {
   ArrowUpDown,
-  ChevronLeft,
-  ChevronRight,
   CalendarDays,
   Save,
   Loader2,
@@ -18,12 +16,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import { Calendar } from "@/components/ui/calendar";
 import {
   DndTableProvider,
   DragHandleCell,
@@ -41,6 +33,8 @@ import {
   filterEmployeesWithReports,
 } from "@/lib/utils";
 import { saveDailyMetrics } from "../actions";
+import { dailyLogsQueryKey } from "../_lib/fetch-daily-logs";
+import { dirtyStore } from "../_lib/dirty-store";
 import { BulkTargetsDialog } from "./bulk-targets-dialog";
 
 const DAILY_LOGS_ORDER_KEY = "daily_logs_custom_order";
@@ -71,7 +65,12 @@ type Props = {
   employees: Employee[];
   initialData: Record<string, DailyMetric>;
   date: string;
+  userId: string;
   userRole: UserRole;
+  /** True while TanStack Query is fetching a new date's payload.
+   *  Combined with `isSaving` into a single overlay signal so the table
+   *  dims to 60% opacity and a toolbar spinner appears during fetches. */
+  isFetching?: boolean;
 };
 
 /* ── Helpers ── */
@@ -95,24 +94,6 @@ function toLocalDateString(d: Date): string {
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
   return `${yyyy}-${mm}-${dd}`;
-}
-
-function shiftDate(isoDate: string, days: number): string {
-  const [y, m, d] = isoDate.split("-").map(Number);
-  const shifted = new Date(y, m - 1, d + days);
-  return toLocalDateString(shifted);
-}
-
-const SHORT_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const LONG_MONTHS = [
-  "January", "February", "March", "April", "May", "June",
-  "July", "August", "September", "October", "November", "December",
-];
-
-function formatShortDate(isoDate: string): string {
-  const [y, m, d] = isoDate.split("-").map(Number);
-  const dow = new Date(y, m - 1, d).getDay();
-  return `${SHORT_DAYS[dow]}, ${d} ${LONG_MONTHS[m - 1]} ${y}`;
 }
 
 // Literal full class strings — Tailwind v4 source-scanning must see them verbatim.
@@ -351,12 +332,12 @@ export function DailyLogView({
   employees,
   initialData,
   date,
+  userId,
   userRole,
+  isFetching = false,
 }: Props) {
-  const router = useRouter();
-  const searchParams = useSearchParams();
+  const queryClient = useQueryClient();
   const [isSaving, startSaveTransition] = useTransition();
-  const [isNavigating, startNavigation] = useTransition();
   const canEditTargets = userRole === "super_admin" || userRole === "custom_admin";
   const canEdit = userRole !== "viewer";
 
@@ -387,12 +368,16 @@ export function DailyLogView({
     if (theadRef.current) setTheadHeight(theadRef.current.offsetHeight);
   }, []);
 
-  const [calendarOpen, setCalendarOpen] = useState(false);
-  // URL-backed search so the filter survives the key={date} remount
-  // that happens whenever the user navigates to a different day.
+  // URL-backed search so the filter is shareable and survives any
+  // future remounts. With key={date} gone the survival isn't strictly
+  // necessary, but keeping search in the URL keeps it consistent with
+  // Monthly / Cumulative pages.
   const { inputValue: searchFilter, setInputValue: setSearchFilter } =
     useDebouncedSearch("query", 300);
   const [bulkDialogOpen, setBulkDialogOpen] = useState(false);
+  // Hydration guard for the resize handles below — they measure DOM and
+  // would emit different markup between SSR and first client render. Only
+  // mount them after hydration so React doesn't warn.
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
@@ -435,11 +420,6 @@ export function DailyLogView({
       return null;
     });
   }, []);
-
-  const selectedDate = useMemo(() => {
-    const [y, m, d] = date.split("-").map(Number);
-    return new Date(y, m - 1, d);
-  }, [date]);
 
   // Baseline from server — updated after successful save
   const [originalEntries, setOriginalEntries] = useState<
@@ -564,26 +544,16 @@ export function DailyLogView({
     []
   );
 
-  const handleNavigate = useCallback(
-    (newDate: string) => {
-      if (dirty.size > 0 && !confirm("You have unsaved changes. Discard?")) {
-        return;
-      }
-      // Merge with existing URL params so other filters (e.g. ?query=)
-      // aren't wiped. Also flush the current input value in case the
-      // debounce hasn't yet committed — the key={date} remount would
-      // otherwise re-initialize the search input from a stale URL.
-      const params = new URLSearchParams(searchParams.toString());
-      params.set("date", newDate);
-      const trimmed = searchFilter.trim();
-      if (trimmed) params.set("query", trimmed);
-      else params.delete("query");
-      startNavigation(() => {
-        router.push(`/daily-logs?${params.toString()}`);
-      });
-    },
-    [dirty, router, startNavigation, searchParams, searchFilter]
-  );
+  // Publish dirty count to the cross-tree store so the lifted
+  // DailyLogDateSelector (which lives outside Suspense) can read it for
+  // the unsaved-changes confirm before navigating to a different date.
+  // Reset to 0 on unmount so a stale count doesn't leak across pages.
+  useEffect(() => {
+    dirtyStore.set(dirty.size);
+    return () => {
+      dirtyStore.set(0);
+    };
+  }, [dirty]);
 
   const handleSave = () => {
     if (dirty.size === 0) return;
@@ -611,6 +581,17 @@ export function DailyLogView({
         `Saved daily data for ${changedEntries.length} employee(s)`
       );
       setOriginalEntries((prev) => ({ ...prev, ...savedSnapshot }));
+
+      // Mark the cached entry for this date as stale without forcing a
+      // refetch right now. We just updated local state to match what
+      // was saved; refetching immediately would either be a no-op or
+      // (worse, if the user typed more after kicking off the save)
+      // clobber unsaved keystrokes. The next navigation back to this
+      // date will pick up fresh server data automatically.
+      queryClient.invalidateQueries({
+        queryKey: dailyLogsQueryKey({ date, userId, userRole }),
+        refetchType: "none",
+      });
     });
   };
 
@@ -618,7 +599,11 @@ export function DailyLogView({
   // ISO YYYY-MM-DD strings are lexically orderable, so plain <=
   // is a safe "same day or earlier" check without Date objects.
   const isPastOrToday = date <= today;
-  const isBusy = isSaving || isNavigating;
+  // Single overlay signal — dims the card and gates pointer events for
+  // both the cross-date fetch (isFetching) and the in-flight save
+  // (isSaving). The lifted DateSelector never goes into a busy state;
+  // all loading feedback lives here on the data view.
+  const showOverlay = isFetching || isSaving;
 
   // Extract month/year for the bulk targets dialog defaults
   const [dateYear, dateMonth] = date.split("-").map(Number);
@@ -639,79 +624,18 @@ export function DailyLogView({
         </div>
 
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5">
-            <Button
-              variant="outline"
-              size="icon-sm"
-              onClick={() => handleNavigate(shiftDate(date, -1))}
-              disabled={isBusy}
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-
-            <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
-              <PopoverTrigger
-                render={
-                  <Button
-                    id="daily-logs-date-trigger"
-                    variant="outline"
-                    className="gap-2 px-3"
-                    disabled={isBusy}
-                  />
-                }
-              >
-                <CalendarDays className="h-4 w-4 text-primary/60" />
-                {isNavigating ? (
-                  <span className="flex items-center gap-1.5 text-muted-foreground">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    Loading&hellip;
-                  </span>
-                ) : (
-                  <span className="font-medium">{formatShortDate(date)}</span>
-                )}
-              </PopoverTrigger>
-              <PopoverContent className="w-auto p-0 shadow-lg" align="start">
-                <Calendar
-                  mode="single"
-                  selected={selectedDate}
-                  onSelect={(day) => {
-                    if (day) {
-                      setCalendarOpen(false);
-                      handleNavigate(toLocalDateString(day));
-                    }
-                  }}
-                  defaultMonth={selectedDate}
-                />
-              </PopoverContent>
-            </Popover>
-
-            <Button
-              variant="outline"
-              size="icon-sm"
-              onClick={() => handleNavigate(shiftDate(date, 1))}
-              disabled={isBusy}
-            >
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-
-            {mounted && date !== today && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => handleNavigate(today)}
-                disabled={isBusy}
-              >
-                Today
-              </Button>
-            )}
-          </div>
+          {/* Cross-date refetch indicator. Hidden while saving — the Save
+           *  button has its own inline spinner that takes precedence. */}
+          {isFetching && !isSaving && (
+            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+          )}
 
           {canEditTargets && (
             <Button
               variant="outline"
               size="sm"
               onClick={() => setBulkDialogOpen(true)}
-              disabled={isBusy}
+              disabled={isSaving}
             >
               <Target className="mr-2 h-4 w-4" />
               Set Targets
@@ -721,7 +645,7 @@ export function DailyLogView({
           {canEdit && dirty.size > 0 && (
             <Button
               onClick={handleSave}
-              disabled={isBusy}
+              disabled={isSaving}
               size="sm"
               className="shadow-sm"
             >
@@ -738,7 +662,10 @@ export function DailyLogView({
 
       {/* ── Data Grid ── */}
       <Card
-        className={`flex-1 min-h-0 flex flex-col border-0 py-0 gap-0 rounded-2xl bg-white ring-1 ring-slate-200 shadow-[0_4px_24px_-12px_rgba(79,70,229,0.12)] overflow-hidden transition-all duration-200 hover:shadow-[0_6px_28px_-10px_rgba(79,70,229,0.18)] ${isNavigating ? "opacity-50 pointer-events-none" : ""}`}
+        className={cn(
+          "flex-1 min-h-0 flex flex-col border-0 py-0 gap-0 rounded-2xl bg-white ring-1 ring-slate-200 shadow-[0_4px_24px_-12px_rgba(79,70,229,0.12)] overflow-hidden transition-all duration-200 hover:shadow-[0_6px_28px_-10px_rgba(79,70,229,0.18)]",
+          showOverlay && "opacity-60 pointer-events-none",
+        )}
       >
         <CardContent className="flex-1 min-h-0 flex flex-col p-0">
           <div className="flex-1 min-h-0 overflow-auto">

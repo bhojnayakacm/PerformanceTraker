@@ -396,6 +396,18 @@ export type Database = {
     }
     Functions: {
       get_user_role: { Args: never; Returns: string }
+      get_monthly_mtd: {
+        Args: { _month: number; _year: number }
+        Returns: {
+          employee_id: string
+          mtd_target_calls: number
+          mtd_target_total_meetings: number
+          mtd_actual_calls: number
+          mtd_actual_architect_meetings: number
+          mtd_actual_client_meetings: number
+          mtd_actual_site_visits: number
+        }[]
+      }
     }
     Enums: {
       [_ in never]: never
