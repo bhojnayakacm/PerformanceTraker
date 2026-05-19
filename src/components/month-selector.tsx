@@ -1,6 +1,6 @@
 "use client";
 
-import { useTransition } from "react";
+import { useEffect, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import {
   SelectItem,
   SelectTrigger,
 } from "@/components/ui/select";
+import { navigationPendingStore } from "@/lib/navigation-pending";
 
 const MONTHS = [
   "January",
@@ -53,7 +54,18 @@ export function MonthSelector({
   // instead of freezing the click handler. Pairs with TanStack Query's
   // placeholderData on the consuming grid — the table dims while the
   // new month resolves, never flashes a skeleton.
-  const [, startTransition] = useTransition();
+  const [isPending, startTransition] = useTransition();
+
+  // Mirror this hook-local isPending into the shared navigation store
+  // so the Grid below us (which has no other signal that a navigation
+  // has started) can apply the dim overlay the moment the user clicks.
+  // Cleanup pair guarantees the refcount stays balanced.
+  useEffect(() => {
+    if (isPending) {
+      navigationPendingStore.start();
+      return () => navigationPendingStore.end();
+    }
+  }, [isPending]);
 
   const navigate = (m: number, y: number) => {
     const params = new URLSearchParams(searchParams.toString());

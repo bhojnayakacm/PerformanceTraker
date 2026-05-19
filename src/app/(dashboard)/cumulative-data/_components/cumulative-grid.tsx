@@ -25,6 +25,7 @@ import {
 } from "@/components/data-table/use-column-sizing";
 import { MonthRangeSelector } from "@/components/month-range-selector";
 import { useDebouncedSearch } from "@/hooks/use-debounced-search";
+import { useNavigationPending } from "@/lib/navigation-pending";
 import { cn } from "@/lib/utils";
 import type { EmployeeCumulativeData } from "@/lib/types";
 import { getColumns } from "./columns";
@@ -55,7 +56,13 @@ export function CumulativeGrid({
     "query",
     300,
   );
-  const showOverlay = isFetching || isPending;
+  // `isNavigating` covers the moment between "user opened MonthRange
+  // popover and clicked Apply / a preset" and "useQuery sees the new
+  // queryKey". Without it the grid keeps the prior range's data at
+  // 100 % opacity during the RSC roundtrip — old data masquerading as
+  // new. See src/lib/navigation-pending.ts.
+  const isNavigating = useNavigationPending();
+  const showOverlay = isFetching || isPending || isNavigating;
 
   const columns = useMemo(() => getColumns(), []);
 
@@ -109,10 +116,12 @@ export function CumulativeGrid({
           )}
         </div>
         <div className="flex items-center gap-3">
-          {/* Non-debounce loading badge — fires on range change cache miss.
-           *  Hidden when isPending is already firing (search input has its
-           *  own internal spinner in that case). */}
-          {isFetching && !isPending && (
+          {/* Non-debounce loading badge — fires on EITHER an in-flight
+           *  router transition (range apply / preset click, before the
+           *  new RSC has arrived) OR the TanStack Query refetch that
+           *  follows. Hidden when isPending is already firing (search
+           *  input has its own internal spinner in that case). */}
+          {(isFetching || isNavigating) && !isPending && (
             <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
           )}
           <span className="hidden md:inline text-xs font-medium text-slate-500">
@@ -136,7 +145,7 @@ export function CumulativeGrid({
       <Card
         className={cn(
           "flex-1 min-h-0 flex flex-col border-0 py-0 gap-0 rounded-2xl bg-white ring-1 ring-slate-200 shadow-[0_4px_24px_-12px_rgba(79,70,229,0.12)] overflow-hidden transition-all duration-200 hover:shadow-[0_6px_28px_-10px_rgba(79,70,229,0.18)]",
-          showOverlay && "opacity-60 pointer-events-none",
+          showOverlay && "opacity-50 pointer-events-none transition-opacity",
         )}
       >
         <CardContent className="flex-1 min-h-0 flex flex-col p-0">

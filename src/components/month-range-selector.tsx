@@ -16,6 +16,7 @@ import {
   SelectTrigger,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { navigationPendingStore } from "@/lib/navigation-pending";
 
 const MONTHS_FULL = [
   "January",
@@ -107,7 +108,17 @@ export function MonthRangeSelector({
   // Wrap router.push so React holds the old UI through the RSC fetch.
   // Pairs with the consuming grid's TanStack Query placeholderData for
   // a no-skeleton-flash range change.
-  const [, startTransition] = useTransition();
+  const [isPending, startTransition] = useTransition();
+
+  // Mirror this hook-local isPending into the shared navigation store
+  // so the Grid below us (which has no other signal that a navigation
+  // has started) can apply the dim overlay the moment the user clicks.
+  useEffect(() => {
+    if (isPending) {
+      navigationPendingStore.start();
+      return () => navigationPendingStore.end();
+    }
+  }, [isPending]);
 
   // Draft state — local to the popover. Reset to the applied range each
   // time the popover opens so a "Cancel" really does discard.

@@ -34,8 +34,9 @@ import {
 } from "@/lib/utils";
 import { saveDailyMetrics } from "../actions";
 import { dailyLogsQueryKey } from "../_lib/fetch-daily-logs";
-import { dirtyStore } from "../_lib/dirty-store";
+import { useNavigationPending } from "@/lib/navigation-pending";
 import { BulkTargetsDialog } from "./bulk-targets-dialog";
+import { DailyLogDateSelector } from "./daily-log-date-selector";
 
 const DAILY_LOGS_ORDER_KEY = "daily_logs_custom_order";
 
@@ -544,17 +545,6 @@ export function DailyLogView({
     []
   );
 
-  // Publish dirty count to the cross-tree store so the lifted
-  // DailyLogDateSelector (which lives outside Suspense) can read it for
-  // the unsaved-changes confirm before navigating to a different date.
-  // Reset to 0 on unmount so a stale count doesn't leak across pages.
-  useEffect(() => {
-    dirtyStore.set(dirty.size);
-    return () => {
-      dirtyStore.set(0);
-    };
-  }, [dirty]);
-
   const handleSave = () => {
     if (dirty.size === 0) return;
 
@@ -599,18 +589,29 @@ export function DailyLogView({
   // ISO YYYY-MM-DD strings are lexically orderable, so plain <=
   // is a safe "same day or earlier" check without Date objects.
   const isPastOrToday = date <= today;
-  // Single overlay signal — dims the card and gates pointer events for
-  // both the cross-date fetch (isFetching) and the in-flight save
-  // (isSaving). The lifted DateSelector never goes into a busy state;
-  // all loading feedback lives here on the data view.
-  const showOverlay = isFetching || isSaving;
+  // `isNavigating` covers the gap between "user clicked Prev / Next /
+  // calendar day" and "TanStack Query sees the new queryKey". During
+  // that window the URL hasn't committed yet, so `isFetching` is still
+  // false even though a navigation is in-flight. Without this signal
+  // the table sits at 100% opacity while the server resolves the new
+  // RSC payload — the old data looking like the new data. See
+  // src/lib/navigation-pending.ts.
+  const isNavigating = useNavigationPending();
+  const showOverlay = isFetching || isSaving || isNavigating;
 
   // Extract month/year for the bulk targets dialog defaults
   const [dateYear, dateMonth] = date.split("-").map(Number);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-4">
-      {/* ── Toolbar ── */}
+      {/* ── Toolbar ──
+       *  Layout (left → right):
+       *    [Search input (flex-1)] [Date selector] [Set Targets] [Save]
+       *  The toolbar sits OUTSIDE the dim/disable Card below, so all of
+       *  these controls remain interactive while the table dims to 50 %
+       *  during a fetch or in-flight navigation. The date selector
+       *  receives `dirty.size` directly since it now lives in the same
+       *  component tree. */}
       <div className="shrink-0 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-[0_1px_2px_0_rgba(15,23,42,0.04)] transition-all duration-200 hover:shadow-[0_4px_16px_-6px_rgba(79,70,229,0.15)]">
         <div className="relative flex-1 max-w-sm min-w-[200px]">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -623,11 +624,25 @@ export function DailyLogView({
           />
         </div>
 
-        <div className="flex items-center gap-3">
-          {/* Cross-date refetch indicator. Hidden while saving — the Save
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          {/* Cross-date refetch indicator. Fires on EITHER the in-flight
+           *  router transition (the moment a Prev/Next/calendar click
+           *  kicks off, before the new RSC has arrived) OR the TanStack
+           *  Query refetch that follows. Hidden while saving — the Save
            *  button has its own inline spinner that takes precedence. */}
-          {isFetching && !isSaving && (
+          {(isFetching || isNavigating) && !isSaving && (
             <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+          )}
+
+          <DailyLogDateSelector date={date} dirtyCount={dirty.size} />
+
+          {/* Subtle divider keeps the date controls visually distinct
+           *  from the action buttons that follow. */}
+          {(canEditTargets || (canEdit && dirty.size > 0)) && (
+            <span
+              aria-hidden
+              className="hidden sm:block h-6 w-px bg-slate-200 dark:bg-slate-700"
+            />
           )}
 
           {canEditTargets && (
@@ -664,7 +679,7 @@ export function DailyLogView({
       <Card
         className={cn(
           "flex-1 min-h-0 flex flex-col border-0 py-0 gap-0 rounded-2xl bg-white ring-1 ring-slate-200 shadow-[0_4px_24px_-12px_rgba(79,70,229,0.12)] overflow-hidden transition-all duration-200 hover:shadow-[0_6px_28px_-10px_rgba(79,70,229,0.18)]",
-          showOverlay && "opacity-60 pointer-events-none",
+          showOverlay && "opacity-50 pointer-events-none transition-opacity",
         )}
       >
         <CardContent className="flex-1 min-h-0 flex flex-col p-0">

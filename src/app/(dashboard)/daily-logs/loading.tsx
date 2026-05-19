@@ -9,7 +9,8 @@ export default function DailyLogsLoading() {
           <Skeleton className="h-7 w-28" />
           <Skeleton className="h-4 w-72" />
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-3">
+        {/* Color legend — 4 swatches + labels */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <Skeleton className="h-4 w-16 rounded" />
           <Skeleton className="h-4 w-16 rounded" />
           <Skeleton className="h-4 w-20 rounded" />

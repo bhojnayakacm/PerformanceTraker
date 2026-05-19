@@ -8,7 +8,6 @@ import {
   dailyLogsQueryKey,
   type DailyLogsParams,
 } from "./_lib/fetch-daily-logs";
-import { DailyLogDateSelector } from "./_components/daily-log-date-selector";
 import { DailyLogViewContainer } from "./_components/daily-log-view-container";
 import { DailyLogsSkeleton } from "./_components/daily-logs-skeleton";
 
@@ -24,9 +23,10 @@ export default async function DailyLogsPage({
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-4">
-      {/* Header — title, legend, and the lifted date selector. The selector
-       *  sits up here as a sibling of the Suspense boundary so it remains
-       *  interactive while the table below is fetching. */}
+      {/* Header — title + color legend. The date selector now lives in the
+       *  table's toolbar (a sibling of Search and Set Targets) so all
+       *  filter controls cluster together; the legend stays here as
+       *  ambient page context. */}
       <div className="shrink-0 flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Daily Logs</h1>
@@ -34,29 +34,26 @@ export default async function DailyLogsPage({
             Record daily targets and actuals for meetings and calls.
           </p>
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-2">
-          <DailyLogDateSelector date={date} />
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-            <span className="flex items-center gap-1.5">
-              <span className="h-3 w-3 rounded-sm bg-amber-100 border border-amber-300 dark:bg-amber-950/40 dark:border-amber-800" />
-              Unsaved
-            </span>
-            <span aria-hidden className="text-muted-foreground/40">
-              &middot;
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="h-3 w-3 rounded-sm bg-emerald-100 border border-emerald-500" />
-              &ge;&nbsp;90%
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="h-3 w-3 rounded-sm bg-yellow-100 border border-yellow-400" />
-              70&ndash;89%
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="h-3 w-3 rounded-sm bg-red-100 border border-red-500" />
-              &lt;&nbsp;70%
-            </span>
-          </div>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1.5">
+            <span className="h-3 w-3 rounded-sm bg-amber-100 border border-amber-300 dark:bg-amber-950/40 dark:border-amber-800" />
+            Unsaved
+          </span>
+          <span aria-hidden className="text-muted-foreground/40">
+            &middot;
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="h-3 w-3 rounded-sm bg-emerald-100 border border-emerald-500" />
+            &ge;&nbsp;90%
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="h-3 w-3 rounded-sm bg-yellow-100 border border-yellow-400" />
+            70&ndash;89%
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="h-3 w-3 rounded-sm bg-red-100 border border-red-500" />
+            &lt;&nbsp;70%
+          </span>
         </div>
       </div>
 

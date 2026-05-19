@@ -268,6 +268,42 @@ export function EmployeeDetailDialog({
     getInitialCityTours(data)
   );
 
+  /* ── Inline save feedback (per-field pending state) ──
+   *
+   * When the user clicks Save, we want every field they actually
+   * mutated to render a subtle "in-flight" treatment (indigo ring +
+   * trailing spinner + disabled), while untouched fields keep their
+   * normal look. The goal: localized feedback rather than a single
+   * footer spinner.
+   *
+   *   • RHF fields (everything except city_tours) → read
+   *     `form.formState.dirtyFields[field]` directly. RHF preserves
+   *     dirty state through `handleSubmit`, so during isPending the
+   *     set IS the touched-fields set.
+   *
+   *   • City tours live in local state (`cityTours`) outside RHF.
+   *     `originalCityToursRef` captures the snapshot at dialog-open;
+   *     onSubmit diffs the current tours against it and stores the set
+   *     of changed `_uid`s in `pendingTourUids`. We freeze the set at
+   *     submit time so the pending visual stays stable through the
+   *     round-trip, and clear it on error so the next attempt
+   *     re-derives. */
+  const originalCityToursRef = useRef<CityTourEntry[]>(getInitialCityTours(data));
+  const [pendingTourUids, setPendingTourUids] = useState<Set<string>>(
+    () => new Set()
+  );
+
+  const dirtyFields = form.formState.dirtyFields;
+  const isFieldPending = useCallback(
+    (field: keyof MonthlyDataInput): boolean =>
+      isPending && Boolean(dirtyFields[field]),
+    [isPending, dirtyFields],
+  );
+  const isTourPending = useCallback(
+    (uid: string): boolean => isPending && pendingTourUids.has(uid),
+    [isPending, pendingTourUids],
+  );
+
   /* Deferred body mount.
    *
    * The Performance pillar owns ~30+ controlled inputs, nested CitySelect
@@ -301,7 +337,10 @@ export function EmployeeDetailDialog({
   useEffect(() => {
     if (data) {
       form.reset(getDefaultValues(data));
-      setCityTours(getInitialCityTours(data));
+      const initial = getInitialCityTours(data);
+      setCityTours(initial);
+      originalCityToursRef.current = initial;
+      setPendingTourUids(new Set());
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
@@ -345,8 +384,11 @@ export function EmployeeDetailDialog({
   const handleTargetCitiesChange = useCallback(
     (rawValue: string) => {
       const next = Math.max(0, parseInt(rawValue || "0", 10) || 0);
+      // shouldDirty so the count input itself enters the pending visual
+      // state when this field is what the user actually changed.
       form.setValue("target_travelling_cities", next, {
         shouldValidate: true,
+        shouldDirty: true,
       });
       setCityTours((prev) => {
         if (prev.length === next) return prev;
@@ -440,6 +482,27 @@ export function EmployeeDetailDialog({
   function onSubmit(values: MonthlyDataInput) {
     if (!data) return;
 
+    // Snapshot which city tours the user mutated against the
+    // dialog-open baseline. Freezing here means the per-block
+    // visual is stable through the network round-trip even if the
+    // baseline ref is mutated by an unrelated re-render.
+    const originalByUid = new Map(
+      originalCityToursRef.current.map((t) => [t._uid, t]),
+    );
+    const changedUids = new Set<string>();
+    for (const t of cityTours) {
+      const orig = originalByUid.get(t._uid);
+      if (
+        !orig ||
+        orig.city_id !== t.city_id ||
+        orig.target_days !== t.target_days ||
+        orig.actual_days !== t.actual_days
+      ) {
+        changedUids.add(t._uid);
+      }
+    }
+    setPendingTourUids(changedUids);
+
     startTransition(async () => {
       const result = await saveMonthlyData({
         employeeId: data.employee.id,
@@ -449,6 +512,10 @@ export function EmployeeDetailDialog({
       });
 
       if ("error" in result) {
+        // Clear the pending visual so the user can retry without
+        // leftover indigo highlights. RHF's dirtyFields persists, so
+        // a retry will re-derive the same pending set.
+        setPendingTourUids(new Set());
         toast.error(result.error);
         return;
       }
@@ -651,11 +718,13 @@ export function EmployeeDetailDialog({
                             <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
                               Target
                             </span>
-                            <Input
+                            <PendingInput
                               type="number"
                               {...form.register("target_client_visits")}
                               {...NUM_INPUT_PROPS}
                               disabled={!canEditTargets}
+                              pending={isFieldPending("target_client_visits")}
+                              wrapperClassName="w-20"
                               className="h-7 w-20 text-right text-sm tabular-nums"
                             />
                           </div>
@@ -663,11 +732,13 @@ export function EmployeeDetailDialog({
                             <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
                               Actual
                             </span>
-                            <Input
+                            <PendingInput
                               type="number"
                               {...form.register("actual_client_visits")}
                               {...NUM_INPUT_PROPS}
                               disabled={!canEdit}
+                              pending={isFieldPending("actual_client_visits")}
+                              wrapperClassName="w-20"
                               className="h-7 w-20 text-right text-sm tabular-nums"
                             />
                           </div>
@@ -681,11 +752,13 @@ export function EmployeeDetailDialog({
                           <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
                             Actual
                           </span>
-                          <Input
+                          <PendingInput
                             type="number"
                             {...form.register("actual_conversions")}
                             {...NUM_INPUT_PROPS}
                             disabled={!canEdit}
+                            pending={isFieldPending("actual_conversions")}
+                            wrapperClassName="w-20"
                             className="h-7 w-20 text-right text-sm tabular-nums"
                           />
                         </div>
@@ -705,11 +778,13 @@ export function EmployeeDetailDialog({
                           Manually set goal
                         </p>
                       </div>
-                      <Input
+                      <PendingInput
                         type="number"
                         {...form.register("target_dispatched_sqft")}
                         {...NUM_INPUT_PROPS}
                         disabled={!canEditTargets}
+                        pending={isFieldPending("target_dispatched_sqft")}
+                        wrapperClassName="w-28"
                         className="h-7 w-28 text-right text-sm tabular-nums"
                       />
                     </div>
@@ -730,24 +805,28 @@ export function EmployeeDetailDialog({
                           field="actual_project_2"
                           form={form}
                           canEdit={canEdit}
+                          pending={isFieldPending("actual_project_2")}
                         />
                         <BreakdownInput
                           label="Project"
                           field="actual_project"
                           form={form}
                           canEdit={canEdit}
+                          pending={isFieldPending("actual_project")}
                         />
                         <BreakdownInput
                           label="Tile"
                           field="actual_tile"
                           form={form}
                           canEdit={canEdit}
+                          pending={isFieldPending("actual_tile")}
                         />
                         <BreakdownInput
                           label="Retail"
                           field="actual_retail"
                           form={form}
                           canEdit={canEdit}
+                          pending={isFieldPending("actual_retail")}
                         />
                       </div>
 
@@ -767,12 +846,14 @@ export function EmployeeDetailDialog({
                         <Label className="text-xs text-foreground/80 shrink-0">
                           Return
                         </Label>
-                        <Input
+                        <PendingInput
                           type="number"
                           {...form.register("actual_return")}
                           {...NUM_INPUT_PROPS}
                           disabled={!canEdit}
-                          className="h-7 w-24 ml-auto text-right text-sm tabular-nums"
+                          pending={isFieldPending("actual_return")}
+                          wrapperClassName="ml-auto w-24"
+                          className="h-7 w-24 text-right text-sm tabular-nums"
                         />
                       </div>
                     </div>
@@ -805,7 +886,7 @@ export function EmployeeDetailDialog({
                         >
                           Target Cities
                         </Label>
-                        <Input
+                        <PendingInput
                           id="target-cities"
                           type="number"
                           {...NUM_INPUT_PROPS}
@@ -815,6 +896,8 @@ export function EmployeeDetailDialog({
                             handleTargetCitiesChange(e.target.value)
                           }
                           disabled={!canEditTargets}
+                          pending={isFieldPending("target_travelling_cities")}
+                          wrapperClassName="w-16"
                           className="h-8 w-16 text-right text-sm tabular-nums"
                         />
                       </div>
@@ -848,6 +931,7 @@ export function EmployeeDetailDialog({
                               disabledCityIds={selectedIds}
                               canEditTargets={canEditTargets}
                               canEdit={canEdit}
+                              pending={isTourPending(tour._uid)}
                               onUpdate={(patch) => updateCityTour(i, patch)}
                               onRemove={() => removeCityTour(i)}
                             />
@@ -913,24 +997,28 @@ export function EmployeeDetailDialog({
                       field="salary"
                       form={form}
                       canEdit={canEdit}
+                      pending={isFieldPending("salary")}
                     />
                     <CostingRow
                       label="TADA"
                       field="tada"
                       form={form}
                       canEdit={canEdit}
+                      pending={isFieldPending("tada")}
                     />
                     <CostingRow
                       label="Incentive"
                       field="incentive"
                       form={form}
                       canEdit={canEdit}
+                      pending={isFieldPending("incentive")}
                     />
                     <CostingRow
                       label="Sales Promotion"
                       field="sales_promotion"
                       form={form}
                       canEdit={canEdit}
+                      pending={isFieldPending("sales_promotion")}
                     />
                   </div>
                 </SectionCard>
@@ -1183,6 +1271,60 @@ function ReadOnlySubMetric({
 }
 
 /* ════════════════════════════════════════════════════════════════
+   PendingInput — drop-in <Input> wrapper that paints a subtle indigo
+   ring + trailing inline spinner and disables the field while a save
+   for THIS field is in flight. Visual contract:
+
+     • Normal     → identical to plain <Input>; the wrapper is
+                    transparent layout-wise (just adds `position:
+                    relative`).
+     • Pending    → indigo-tinted bg + ring, value text muted toward
+                    indigo, right-padding bumped to make room for a
+                    `h-3 w-3` spinner anchored at the right edge,
+                    disabled so the user can't type while waiting.
+
+   The trailing spinner stays inside the input's footprint, so there
+   is no layout shift between the two states — only color and a tiny
+   icon. That keeps the dialog visually calm during a save instead of
+   redrawing four columns of inputs.
+
+   `wrapperClassName` lets callers constrain the outer width when the
+   Input has a fixed `w-*` and is laid out next to siblings that need
+   to size to it (e.g. inputs in a `justify-between` row).
+   ════════════════════════════════════════════════════════════════ */
+
+function PendingInput({
+  pending,
+  className,
+  wrapperClassName,
+  disabled,
+  ...inputProps
+}: React.ComponentProps<typeof Input> & {
+  pending?: boolean;
+  wrapperClassName?: string;
+}) {
+  return (
+    <div className={cn("relative", wrapperClassName)}>
+      <Input
+        {...inputProps}
+        disabled={disabled || pending}
+        className={cn(
+          className,
+          pending &&
+            "pr-7 ring-1 ring-indigo-300 bg-indigo-50/50 text-indigo-700/80 dark:ring-indigo-700/60 dark:bg-indigo-950/30 dark:text-indigo-300/80 transition-colors",
+        )}
+      />
+      {pending && (
+        <Loader2
+          aria-hidden
+          className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 h-3 w-3 animate-spin text-indigo-500 dark:text-indigo-400"
+        />
+      )}
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════
    BreakdownInput — Dispatched Qty sub-items
    ════════════════════════════════════════════════════════════════ */
 
@@ -1191,20 +1333,24 @@ function BreakdownInput({
   field,
   form,
   canEdit,
+  pending,
 }: {
   label: string;
   field: keyof MonthlyDataInput;
   form: UseFormReturn<MonthlyDataInput>;
   canEdit: boolean;
+  pending?: boolean;
 }) {
   return (
     <div className="flex items-center justify-between gap-2">
       <Label className="text-xs text-foreground/80 shrink-0">{label}</Label>
-      <Input
+      <PendingInput
         type="number"
         {...form.register(field)}
         {...NUM_INPUT_PROPS}
         disabled={!canEdit}
+        pending={pending}
+        wrapperClassName="w-24"
         className="h-7 w-24 text-right text-sm tabular-nums"
       />
     </div>
@@ -1220,24 +1366,27 @@ function CostingRow({
   field,
   form,
   canEdit,
+  pending,
 }: {
   label: string;
   field: keyof MonthlyDataInput;
   form: UseFormReturn<MonthlyDataInput>;
   canEdit: boolean;
+  pending?: boolean;
 }) {
   return (
     <div className="space-y-1">
       <Label className="text-xs text-muted-foreground">{label}</Label>
       <div className="relative">
-        <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+        <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 z-10 text-xs text-muted-foreground">
           ₹
         </span>
-        <Input
+        <PendingInput
           type="number"
           {...form.register(field)}
           {...NUM_INPUT_PROPS}
           disabled={!canEdit}
+          pending={pending}
           className="h-9 pl-6 text-right text-sm tabular-nums"
         />
       </div>
@@ -1256,6 +1405,7 @@ function CityBlock({
   disabledCityIds,
   canEditTargets,
   canEdit,
+  pending,
   onUpdate,
   onRemove,
 }: {
@@ -1265,6 +1415,10 @@ function CityBlock({
   disabledCityIds: Set<string>;
   canEditTargets: boolean;
   canEdit: boolean;
+  /** True while a save is in flight AND this card's data differs from
+   *  the dialog-open snapshot. Drives the indigo ring + trailing
+   *  spinner on the city select and both day inputs. */
+  pending?: boolean;
   onUpdate: (patch: Partial<CityTourEntry>) => void;
   onRemove: () => void;
 }) {
@@ -1274,7 +1428,13 @@ function CityBlock({
   );
 
   return (
-    <div className="rounded-xl border border-indigo-200/70 dark:border-indigo-900/50 bg-background/80 dark:bg-background/50 p-3 shadow-sm backdrop-blur-sm space-y-2.5">
+    <div
+      className={cn(
+        "rounded-xl border border-indigo-200/70 dark:border-indigo-900/50 bg-background/80 dark:bg-background/50 p-3 shadow-sm backdrop-blur-sm space-y-2.5 transition-all",
+        pending &&
+          "ring-1 ring-indigo-300 dark:ring-indigo-700 bg-indigo-50/30 dark:bg-indigo-950/20",
+      )}
+    >
       <div className="flex items-center gap-2">
         <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-[10px] font-bold text-indigo-700 dark:bg-indigo-950/70 dark:text-indigo-300 ring-1 ring-indigo-200/60 dark:ring-indigo-900/60">
           {index + 1}
@@ -1284,15 +1444,16 @@ function CityBlock({
             cities={cities}
             value={tour.city_id}
             onChange={(cityId) => onUpdate({ city_id: cityId })}
-            disabled={!canEditTargets}
+            disabled={!canEditTargets || Boolean(pending)}
             disabledCityIds={disabledCityIds}
             selectedCityName={selectedCity?.name ?? null}
+            pending={pending}
           />
         </div>
         <button
           type="button"
           onClick={onRemove}
-          disabled={!canEditTargets}
+          disabled={!canEditTargets || Boolean(pending)}
           aria-label={`Remove city block ${index + 1}`}
           title={canEditTargets ? `Remove city ${index + 1}` : undefined}
           className={cn(
@@ -1310,7 +1471,7 @@ function CityBlock({
           <Label className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
             Target Days
           </Label>
-          <Input
+          <PendingInput
             type="number"
             {...DAY_INPUT_PROPS}
             value={tour.target_days}
@@ -1320,6 +1481,7 @@ function CityBlock({
               })
             }
             disabled={!canEditTargets}
+            pending={pending}
             className="h-8 text-right text-sm tabular-nums"
           />
         </div>
@@ -1327,7 +1489,7 @@ function CityBlock({
           <Label className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
             Actual Days
           </Label>
-          <Input
+          <PendingInput
             type="number"
             {...DAY_INPUT_PROPS}
             value={tour.actual_days}
@@ -1337,6 +1499,7 @@ function CityBlock({
               })
             }
             disabled={!canEdit}
+            pending={pending}
             className="h-8 text-right text-sm tabular-nums"
           />
         </div>
@@ -1352,6 +1515,7 @@ function CitySelect({
   disabled,
   disabledCityIds,
   selectedCityName,
+  pending,
 }: {
   cities: City[];
   value: string | null;
@@ -1359,6 +1523,9 @@ function CitySelect({
   disabled: boolean;
   disabledCityIds: Set<string>;
   selectedCityName: string | null;
+  /** When true, the trigger gets an indigo ring + trailing spinner
+   *  (in place of the chevron) to signal an in-flight save. */
+  pending?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -1386,19 +1553,26 @@ function CitySelect({
           "flex w-full items-center gap-2 rounded-md border border-input bg-background px-3 h-9 text-sm",
           "hover:border-ring/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           "disabled:cursor-not-allowed disabled:opacity-60 transition-colors",
-          open && "ring-2 ring-ring"
+          open && "ring-2 ring-ring",
+          pending &&
+            "ring-1 ring-indigo-300 dark:ring-indigo-700 bg-indigo-50/40 dark:bg-indigo-950/30",
         )}
       >
         <MapPin className="h-3.5 w-3.5 shrink-0 text-indigo-500 dark:text-indigo-400" />
         <span
           className={cn(
             "flex-1 truncate text-left",
-            !selectedCityName && "text-muted-foreground"
+            !selectedCityName && "text-muted-foreground",
+            pending && "text-indigo-700/80 dark:text-indigo-300/80",
           )}
         >
           {selectedCityName ?? "Select a city\u2026"}
         </span>
-        <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 opacity-50" />
+        {pending ? (
+          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-indigo-500 dark:text-indigo-400" />
+        ) : (
+          <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 opacity-50" />
+        )}
       </PopoverTrigger>
       <PopoverContent
         align="start"

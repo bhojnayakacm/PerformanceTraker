@@ -36,6 +36,7 @@ import {
 import { cn, getAvatarColor, getInitials, formatDoj } from "@/lib/utils";
 import type { EmployeeMonthlyData, UserRole, City } from "@/lib/types";
 import { useDebouncedSearch } from "@/hooks/use-debounced-search";
+import { useNavigationPending } from "@/lib/navigation-pending";
 import { getColumns } from "./columns";
 import { EmployeeDetailDialog } from "./employee-detail-dialog";
 import { ManageCitiesDialog } from "./manage-cities-dialog";
@@ -70,11 +71,21 @@ export function PerformanceGrid({
 }: Props) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const { inputValue, setInputValue, isPending } = useDebouncedSearch("query", 300);
-  // Single loading signal. `isPending` fires during the 300ms debounce +
-  // router transition for search; `isFetching` fires during the actual
-  // Supabase round-trip for any filter change. Either one means "table
-  // contents are about to update" — same UX treatment.
-  const showOverlay = isFetching || isPending;
+  // `isNavigating` covers the moment between "user clicked the month
+  // dropdown / a Prev/Next arrow" and "useQuery sees the new
+  // queryKey". MonthSelector publishes its hook-local useTransition
+  // into a shared store; we subscribe here. Without this signal the
+  // grid sits at 100 % opacity during the RSC roundtrip — the old
+  // month's data looking like the new month's data. See
+  // src/lib/navigation-pending.ts.
+  const isNavigating = useNavigationPending();
+  // Single loading signal. `isPending` fires during the 300 ms debounce
+  // + router transition for search; `isFetching` fires during the
+  // actual Supabase round-trip for any filter change; `isNavigating`
+  // fires the instant any URL-driven control (month, year, range
+  // picker) is clicked. Any one means "table contents are about to
+  // update" — same UX treatment.
+  const showOverlay = isFetching || isPending || isNavigating;
   const [detailOpen, setDetailOpen] = useState(false);
   const [selectedRow, setSelectedRow] = useState<EmployeeMonthlyData | null>(
     null
@@ -199,11 +210,13 @@ export function PerformanceGrid({
           )}
         </div>
         <div className="flex items-center gap-2">
-          {/* Non-debounce loading badge — covers month change cache miss,
-           *  manual invalidate, background refresh. Hidden when isPending
-           *  is already firing (the search input has its own internal
-           *  spinner in that case, so doubling up would be visual noise). */}
-          {isFetching && !isPending && (
+          {/* Non-debounce loading badge — fires on EITHER an in-flight
+           *  router transition (Prev/Next/month/year click, before the
+           *  new RSC has arrived) OR the TanStack Query refetch that
+           *  follows. Hidden when isPending is already firing (the
+           *  search input has its own internal spinner in that case,
+           *  so doubling up would be visual noise). */}
+          {(isFetching || isNavigating) && !isPending && (
             <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
           )}
           {userRole === "super_admin" && (
@@ -227,7 +240,7 @@ export function PerformanceGrid({
       </div>
 
       {/* Table */}
-      <Card className={cn("flex-1 min-h-0 flex flex-col border-0 py-0 gap-0 rounded-2xl bg-white ring-1 ring-slate-200 shadow-[0_4px_24px_-12px_rgba(79,70,229,0.12)] overflow-hidden transition-all duration-200 hover:shadow-[0_6px_28px_-10px_rgba(79,70,229,0.18)]", showOverlay && "opacity-60 pointer-events-none")}>
+      <Card className={cn("flex-1 min-h-0 flex flex-col border-0 py-0 gap-0 rounded-2xl bg-white ring-1 ring-slate-200 shadow-[0_4px_24px_-12px_rgba(79,70,229,0.12)] overflow-hidden transition-all duration-200 hover:shadow-[0_6px_28px_-10px_rgba(79,70,229,0.18)]", showOverlay && "opacity-50 pointer-events-none transition-opacity")}>
         <CardContent className="flex-1 min-h-0 flex flex-col p-0">
           <div className="flex-1 min-h-0 overflow-auto">
             <DndTableProvider

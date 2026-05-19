@@ -5,14 +5,16 @@ import { Card, CardContent } from "@/components/ui/card";
 export function DailyLogsSkeleton() {
   return (
     <div className="flex h-full min-h-0 flex-col gap-4">
-      {/* Toolbar */}
+      {/* Toolbar — matches the live layout:
+       *    [Search] [Prev] [Date display] [Next] [Set Targets] */}
       <div className="shrink-0 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-[0_1px_2px_0_rgba(15,23,42,0.04)]">
         <Skeleton className="h-9 w-64 rounded-md" />
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           <Skeleton className="h-9 w-9 rounded-md" />
           <Skeleton className="h-9 w-44 rounded-md" />
           <Skeleton className="h-9 w-9 rounded-md" />
-          <Skeleton className="h-8 w-16 rounded-md" />
+          <span aria-hidden className="hidden sm:block h-6 w-px bg-slate-200" />
+          <Skeleton className="h-9 w-28 rounded-md" />
         </div>
       </div>
 
